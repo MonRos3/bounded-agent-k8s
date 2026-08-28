@@ -8,7 +8,40 @@ The core design principle: the model proposes, deterministic code disposes. The 
 
 ## How to Use
 
-(write after development)
+### Environment model
+
+The project runs across four independently-checkable layers:
+
+1. **Python venv** — this repo's libraries (`boto3`, `kubernetes`, `requests`, ...).
+2. **Docker containers** — MiniStack, serving local Bedrock/IAM/CloudWatch
+   API surfaces on `localhost:4566`.
+3. **System CLIs** — Ollama (`localhost:11434`), minikube, kubectl, kubescape.
+4. **Code** — `safety_core/` (domain-independent safety spine) and
+   `k8s_agent/` (Kubernetes-specific domain layer).
+
+`make verify` checks each layer on its own and reports a ✓/✗ per layer, so a
+failure tells you exactly which one is down rather than a generic
+"environment not ready."
+
+### Prerequisites
+
+Install these yourself — they are system tools, not Python packages, and are
+never installed via `requirements.txt`:
+
+- [Docker](https://www.docker.com/) (running MiniStack)
+- [minikube](https://minikube.sigs.k8s.io/) + `kubectl`
+- [kubescape](https://kubescape.io/)
+- [Ollama](https://ollama.com/)
+
+### Quickstart
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env
+make verify
+```
 
 ## Bounded AI Agent Design Overview
 
