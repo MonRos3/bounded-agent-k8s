@@ -1,0 +1,57 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# --- Secrets & environment ---
+# Never commit credentials; local config stays in .env
+.env
+.env.*
+.env/
+*.pem
+*.key
+credentials.json
+
+# --- Kubernetes / cluster (minikube -> EKS) ---
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+.kube/
+# local Helm chart deps / values overrides, not the charts themselves
+charts/*.tgz
+values.local.yaml
+values.*.local.yaml
+
+# --- LLM / model artifacts (Bedrock proxy -> local Ollama) ---
+.ollama/
+*.gguf
+*.safetensors
+*.bin
+# local vector store / eval data dumps
+.chroma/
+chroma_data/
+eval_results/
+
+# --- Local AWS emulation (MiniStack -> Bedrock/IAM/CloudWatch) ---
+.ministack/
+.localstack/
+ministack_data/
+
+# --- Logs & audit output ---
+*.log
+logs/
+audit_logs/
+*.jsonl
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+
+CLAUDE.md
