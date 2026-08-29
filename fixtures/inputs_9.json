@@ -1,0 +1,190 @@
+[
+  {
+    "name": "read_only_diagnostic_auto_approved",
+    "action": {
+      "tool": "get_pod_logs",
+      "args": {
+        "namespace": "payments",
+        "pod": "payments-7d9f6b8c4-abc12",
+        "tail_lines": 200
+      },
+      "rationale": "Checking recent logs to diagnose a reported crash loop."
+    },
+    "state": {
+      "healthy_replicas": 3,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 14
+    },
+    "expected_tier": "auto",
+    "expected_reason_contains": "read-only"
+  },
+  {
+    "name": "scale_within_headroom_auto_approved",
+    "action": {
+      "tool": "scale_deployment",
+      "args": {
+        "namespace": "web",
+        "deployment": "web-frontend",
+        "current_replicas": 3,
+        "target_replicas": 5
+      },
+      "rationale": "Traffic is trending up; scaling out ahead of the evening peak."
+    },
+    "state": {
+      "healthy_replicas": 3,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 22
+    },
+    "expected_tier": "auto",
+    "expected_reason_contains": "headroom"
+  },
+  {
+    "name": "restart_healthy_deployment_auto_approved",
+    "action": {
+      "tool": "restart_deployment",
+      "args": {
+        "namespace": "web",
+        "deployment": "web-frontend"
+      },
+      "rationale": "Rolling restart to pick up a refreshed ConfigMap value."
+    },
+    "state": {
+      "healthy_replicas": 4,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 9
+    },
+    "expected_tier": "auto",
+    "expected_reason_contains": "rollback target"
+  },
+  {
+    "name": "memory_limit_change_requires_approval",
+    "action": {
+      "tool": "update_resource_limits",
+      "args": {
+        "namespace": "web",
+        "deployment": "web-frontend",
+        "memory_limit": "512Mi"
+      },
+      "rationale": "Pods are hitting OOMKilled under load; raising the memory ceiling."
+    },
+    "state": {
+      "healthy_replicas": 3,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 22,
+      "dry_run_diff": "- resources.limits.memory: 256Mi\n+ resources.limits.memory: 512Mi"
+    },
+    "expected_tier": "approve",
+    "expected_reason_contains": "live workload"
+  },
+  {
+    "name": "single_pod_delete_no_pdb_breach_requires_approval",
+    "action": {
+      "tool": "delete_pod",
+      "args": {
+        "namespace": "web",
+        "pod": "web-frontend-6f9c7d5b7-t4k2m"
+      },
+      "rationale": "This pod is stuck in a bad state and needs to be recycled."
+    },
+    "state": {
+      "healthy_replicas": 4,
+      "pdb_min_available": 3,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 22
+    },
+    "expected_tier": "approve",
+    "expected_reason_contains": "does not breach"
+  },
+  {
+    "name": "scale_mid_batch_workload_requires_approval",
+    "action": {
+      "tool": "scale_deployment",
+      "args": {
+        "namespace": "batch",
+        "deployment": "batch-worker",
+        "current_replicas": 5,
+        "target_replicas": 2
+      },
+      "rationale": "Reducing worker count to free cluster capacity for another job."
+    },
+    "state": {
+      "healthy_replicas": 5,
+      "pdb_min_available": 1,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 7,
+      "mid_batch": true
+    },
+    "expected_tier": "approve",
+    "expected_reason_contains": "mid-batch"
+  },
+  {
+    "name": "protected_namespace_action_blocked",
+    "action": {
+      "tool": "delete_pod",
+      "args": {
+        "namespace": "kube-system",
+        "pod": "coredns-6f9c7d5b7-abcde"
+      },
+      "rationale": "Pod appears unhealthy and may need to be recycled."
+    },
+    "state": {
+      "healthy_replicas": 2,
+      "pdb_min_available": 1,
+      "protected": true,
+      "has_rollback_target": true,
+      "revision": 3
+    },
+    "expected_tier": "block",
+    "expected_reason_contains": "protected"
+  },
+  {
+    "name": "mutation_blocked_when_no_rollback_target",
+    "action": {
+      "tool": "delete_persistent_volume_claim",
+      "args": {
+        "namespace": "database",
+        "pvc": "pg-data-0"
+      },
+      "rationale": "Freeing up storage that appears to be an orphaned claim."
+    },
+    "state": {
+      "healthy_replicas": 1,
+      "pdb_min_available": 1,
+      "protected": false,
+      "has_rollback_target": false,
+      "revision": 1
+    },
+    "expected_tier": "block",
+    "expected_reason_contains": "no rollback target"
+  },
+  {
+    "name": "delete_pod_blocked_when_breaches_pdb",
+    "action": {
+      "tool": "delete_pod",
+      "args": {
+        "namespace": "web",
+        "pod": "web-frontend-6f9c7d5b7-x9z1q"
+      },
+      "rationale": "This pod is stuck in a bad state and needs to be recycled."
+    },
+    "state": {
+      "healthy_replicas": 2,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 22
+    },
+    "expected_tier": "block",
+    "expected_reason_contains": "PDB"
+  }
+]
