@@ -18,3 +18,10 @@ fi
 
 echo "seed.sh: applying manifests from $SEED_DIR"
 kubectl apply -f "$SEED_DIR"
+
+# A Deployment always starts at revision 1 on first apply — static YAML
+# alone can't seed "has rollback history". Trigger a real rollout restart
+# for rollback-target-web so it deterministically has a second revision.
+echo "seed.sh: generating rollout history for rollback-target-web"
+kubectl rollout restart deployment/rollback-target-web -n bounded-agent-demo
+kubectl rollout status deployment/rollback-target-web -n bounded-agent-demo --timeout=120s

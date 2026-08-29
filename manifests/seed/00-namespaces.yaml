@@ -1,0 +1,12 @@
+# The two demo namespaces. bounded-agent-demo-protected exists solely to
+# demonstrate the gate's protected-zone rule — it is NOT a real Kubernetes
+# system namespace (never seed demo workloads into kube-system itself).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bounded-agent-demo
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bounded-agent-demo-protected

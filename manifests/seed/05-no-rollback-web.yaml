@@ -1,0 +1,41 @@
+# Stays at a single revision (seed.sh never restarts this one) -> exactly
+# one ReplicaSet, so has_rollback_target reads False: an irreversible
+# mutation here has no rollback target to undo to. BLOCK demo case.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: no-rollback-web
+  namespace: bounded-agent-demo
+  labels:
+    app: no-rollback-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: no-rollback-web
+  template:
+    metadata:
+      labels:
+        app: no-rollback-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: no-rollback-web
+  namespace: bounded-agent-demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: no-rollback-web
