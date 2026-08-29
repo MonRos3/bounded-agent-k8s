@@ -1,4 +1,4 @@
-.PHONY: verify reset seed test demo
+.PHONY: verify reset seed test test-integration demo
 
 verify:
 	bash scripts/verify.sh
@@ -10,7 +10,10 @@ seed:
 	bash scripts/seed.sh
 
 test:
-	pytest
+	python -m pytest
+
+test-integration:
+	python -m pytest -m integration
 
 demo:
 	@echo "demo: not yet implemented"
