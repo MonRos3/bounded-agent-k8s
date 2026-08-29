@@ -1,0 +1,44 @@
+[
+  {
+    "name": "regression_false_when_observed_meets_target",
+    "criterion": {
+      "metric": "ready_replica_count",
+      "target": 5,
+      "baseline": 3,
+      "comparison": "gte"
+    },
+    "observed": {
+      "ready_replica_count": 5
+    },
+    "expected_regression": false,
+    "note": "Observed meets the criterion's target under 'gte' — success, no regression."
+  },
+  {
+    "name": "regression_true_when_observed_below_baseline",
+    "criterion": {
+      "metric": "ready_replica_count",
+      "target": 5,
+      "baseline": 3,
+      "comparison": "gte"
+    },
+    "observed": {
+      "ready_replica_count": 2
+    },
+    "expected_regression": true,
+    "note": "Observed is below both baseline and target — a clear regression."
+  },
+  {
+    "name": "regression_true_when_partial_improvement_still_misses_target",
+    "criterion": {
+      "metric": "ready_replica_count",
+      "target": 5,
+      "baseline": 3,
+      "comparison": "gte"
+    },
+    "observed": {
+      "ready_replica_count": 4
+    },
+    "expected_regression": true,
+    "note": "Design decision: check_regression evaluates observed against the criterion's target/comparison only — baseline is context, not part of the pass/fail check. An observed value of 4 is an improvement over the baseline of 3, but still fails 'gte' against the target of 5, so this counts as a regression (fail-closed: partial progress is not success)."
+  }
+]
