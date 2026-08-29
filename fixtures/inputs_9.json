@@ -186,5 +186,26 @@
     },
     "expected_tier": "block",
     "expected_reason_contains": "PDB"
+  },
+  {
+    "name": "action_blocked_when_target_not_found",
+    "action": {
+      "tool": "delete_pod",
+      "args": {
+        "namespace": "web",
+        "pod": "web-frontend-6f9c7d5b7-ghost01"
+      },
+      "rationale": "Recycling a pod the operator reported as stuck."
+    },
+    "state": {
+      "healthy_replicas": 4,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 22,
+      "target_exists": false
+    },
+    "expected_tier": "block",
+    "expected_reason_contains": "target not found"
   }
 ]

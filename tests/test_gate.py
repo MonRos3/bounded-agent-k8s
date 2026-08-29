@@ -1,7 +1,8 @@
 """Gate.classify() behavior, driven by fixtures/inputs_9.json.
 
 Each fixture case's name states the rule it encodes; the parametrize id
-mirrors that name so a failing case reads as the rule that broke.
+mirrors that name so a failing case reads as the rule that broke. The file
+holds 10 cases as of M1.4 (filename kept for continuity — see M1.4's plan).
 """
 
 from __future__ import annotations
