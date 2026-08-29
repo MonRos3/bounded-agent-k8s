@@ -80,7 +80,7 @@ class ClusterClient:
         updated_replicas = deployment.status.updated_replicas or 0
         mid_batch = updated_replicas < desired_replicas
 
-        pdb_min_available = self._pdb_min_available(namespace, label_selector)
+        pdb_min_available = self._pdb_min_available(namespace, app_label)
         revisions = self._revision_history(namespace, label_selector)
 
         return DeploymentState(
@@ -92,13 +92,25 @@ class ClusterClient:
             mid_batch=mid_batch,
         )
 
-    def _pdb_min_available(self, namespace: str, label_selector: str) -> int | None:
+    def _pdb_min_available(self, namespace: str, app_label: str) -> int | None:
         """The matching PodDisruptionBudget's minAvailable, or None if no
         PDB selects these pods (or its minAvailable isn't a plain int —
         percentage-based budgets aren't handled by this demo).
+
+        Lists every PDB in the namespace rather than filtering server-side
+        by label_selector: that query param matches a PDB's own metadata
+        labels, not the pods its spec.selector targets — PDBs are usually
+        authored with no labels of their own, so a label_selector filter
+        here would silently match nothing. Matching spec.selector.match_labels
+        client-side is the correct way to find the PDB governing this
+        deployment's pods.
         """
-        budgets = self._policy.list_namespaced_pod_disruption_budget(namespace, label_selector=label_selector)
+        budgets = self._policy.list_namespaced_pod_disruption_budget(namespace)
         for budget in budgets.items:
+            selector = budget.spec.selector
+            selector_labels = selector.match_labels if selector and selector.match_labels else {}
+            if selector_labels.get("app") != app_label:
+                continue
             min_available = budget.spec.min_available
             if isinstance(min_available, int):
                 return min_available
