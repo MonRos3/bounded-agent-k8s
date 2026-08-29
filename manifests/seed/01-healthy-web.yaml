@@ -1,0 +1,41 @@
+# Healthy, 3 replicas with PDB headroom (minAvailable 1 -> headroom 2).
+# Safe to real-delete one pod and watch it reschedule -- the "safe" AUTO
+# demo case, contrasted with degraded-checkout and solo-replica-web.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: healthy-web
+  namespace: bounded-agent-demo
+  labels:
+    app: healthy-web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: healthy-web
+  template:
+    metadata:
+      labels:
+        app: healthy-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: healthy-web
+  namespace: bounded-agent-demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: healthy-web

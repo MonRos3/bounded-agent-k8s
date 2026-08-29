@@ -1,0 +1,42 @@
+# An entirely ordinary deployment -- what makes it a BLOCK demo case is
+# purely that it lives in bounded-agent-demo-protected, which the demo
+# Policy marks as a protected zone. No special manifest annotation needed;
+# the gate's protected-zone rule is driven by namespace membership alone.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-core
+  namespace: bounded-agent-demo-protected
+  labels:
+    app: payments-core
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: payments-core
+  template:
+    metadata:
+      labels:
+        app: payments-core
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: payments-core
+  namespace: bounded-agent-demo-protected
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: payments-core

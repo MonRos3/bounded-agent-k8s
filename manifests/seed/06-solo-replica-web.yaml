@@ -1,0 +1,45 @@
+# This deployment exists specifically to demonstrate a zero-headroom
+# BLOCK: exactly one healthy replica with PDB minAvailable: 1, so deleting
+# its only pod would immediately breach the budget (headroom 0). It's the
+# visceral "delete the only pod" version of the PDB-breach rule -- clearer
+# for a live audience than the two-replica degraded-checkout case, even
+# though the underlying rule is already covered by that case and by
+# safety_core's own unit tests.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: solo-replica-web
+  namespace: bounded-agent-demo
+  labels:
+    app: solo-replica-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: solo-replica-web
+  template:
+    metadata:
+      labels:
+        app: solo-replica-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: solo-replica-web
+  namespace: bounded-agent-demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: solo-replica-web

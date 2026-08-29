@@ -1,0 +1,42 @@
+# Gets a second revision from scripts/seed.sh's post-apply rollout-restart
+# step -- a Deployment always starts at revision 1 on first apply, so
+# "has rollback history" can't be expressed as static YAML alone. Once
+# seeded, has_rollback_target should read True for this deployment.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollback-target-web
+  namespace: bounded-agent-demo
+  labels:
+    app: rollback-target-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rollback-target-web
+  template:
+    metadata:
+      labels:
+        app: rollback-target-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rollback-target-web
+  namespace: bounded-agent-demo
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: rollback-target-web

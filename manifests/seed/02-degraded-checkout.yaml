@@ -1,0 +1,41 @@
+# Degraded: 2 replicas exactly at its PDB floor (minAvailable 2 ->
+# headroom 0). Represents a deployment that's already lost its slack --
+# any further pod loss would breach the budget. BLOCK demo case.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: degraded-checkout
+  namespace: bounded-agent-demo
+  labels:
+    app: degraded-checkout
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: degraded-checkout
+  template:
+    metadata:
+      labels:
+        app: degraded-checkout
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: degraded-checkout
+  namespace: bounded-agent-demo
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: degraded-checkout
