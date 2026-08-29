@@ -21,7 +21,15 @@ kubectl apply -f "$SEED_DIR"
 
 # A Deployment always starts at revision 1 on first apply — static YAML
 # alone can't seed "has rollback history". Trigger a real rollout restart
-# for rollback-target-web so it deterministically has a second revision.
-echo "seed.sh: generating rollout history for rollback-target-web"
-kubectl rollout restart deployment/rollback-target-web -n bounded-agent-demo
-kubectl rollout status deployment/rollback-target-web -n bounded-agent-demo --timeout=120s
+# for every deployment whose demo scenario depends on having a rollback
+# target (Gate.classify checks irreversibility before the PDB-headroom
+# rule, so healthy-web/degraded-checkout/solo-replica-web all need a 2nd
+# revision too, or their scenarios would BLOCK for the wrong reason).
+# no-rollback-web deliberately stays at 1 revision — that's its whole
+# point — and payments-core doesn't need it either way, since the
+# protected-zone check fires before reversibility is ever considered.
+for deployment in healthy-web degraded-checkout solo-replica-web rollback-target-web; do
+    echo "seed.sh: generating rollout history for $deployment"
+    kubectl rollout restart "deployment/$deployment" -n bounded-agent-demo
+    kubectl rollout status "deployment/$deployment" -n bounded-agent-demo --timeout=120s
+done
