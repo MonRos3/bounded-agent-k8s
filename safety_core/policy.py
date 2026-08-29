@@ -43,12 +43,15 @@ class Policy:
         An unconfigured tool is denied — fail closed, never fall through to
         an implicit allow.
         """
-        raise NotImplementedError
+        return self.rule_for(tool) is not None
 
     def rule_for(self, tool: str) -> Rule | None:
         """Return the Rule configured for `tool`, or None if unconfigured."""
-        raise NotImplementedError
+        for rule in self.rules:
+            if rule.tool == tool:
+                return rule
+        return None
 
     def is_protected(self, zone: str) -> bool:
         """Return True if `zone` is a member of protected_zones."""
-        raise NotImplementedError
+        return zone in self.protected_zones

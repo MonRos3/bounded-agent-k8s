@@ -9,7 +9,21 @@ call, etc.) is part of this contract.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+
+_INJECTION_PHRASES = (
+    "ignore previous instructions",
+    "ignore all previous instructions",
+    "disregard previous instructions",
+    "disregard all previous instructions",
+    "reveal the system prompt",
+    "reveal your system prompt",
+)
+
+_SECRET_PATTERN = re.compile(
+    r"(?i)([\w]*(?:secret|token|password|api[_-]?key)[\w]*\s*[:=]\s*)(\S+)"
+)
 
 
 @dataclass(frozen=True)
@@ -32,8 +46,10 @@ class Guardrails:
         """Screen untrusted input text before it reaches the model or the
         gate. Fails closed: uncertain input must not pass.
         """
-        raise NotImplementedError
+        lowered = text.lower()
+        matched = tuple(phrase for phrase in _INJECTION_PHRASES if phrase in lowered)
+        return GuardrailResult(passed=not matched, flagged=matched)
 
     def redact_output(self, text: str) -> str:
         """Return `text` with secrets/PII removed, safe to surface or audit."""
-        raise NotImplementedError
+        return _SECRET_PATTERN.sub(r"\1[REDACTED]", text)

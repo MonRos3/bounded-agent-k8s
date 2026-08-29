@@ -55,4 +55,6 @@ audit_logs/
 .DS_Store
 .idea/
 
+# --- Documentation ---
 CLAUDE.md
+test_output.txt

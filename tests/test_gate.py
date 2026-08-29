@@ -25,3 +25,14 @@ def test_gate_classifies_per_fixture(case, gate_policy, fake_rollback_planner, f
 
     assert decision.tier == Tier(case["expected_tier"])
     assert case["expected_reason_contains"] in decision.reason
+
+
+def test_gate_blocks_unconfigured_tool_default_deny(gate_policy, fake_rollback_planner, fake_success_definer):
+    action = Action(tool="not_a_configured_tool", args={}, rationale="")
+    state = State(facts={})
+    gate = Gate(gate_policy, fake_rollback_planner, fake_success_definer)
+
+    decision = gate.classify(action, state)
+
+    assert decision.tier == Tier.BLOCK
+    assert "not an allowed action" in decision.reason

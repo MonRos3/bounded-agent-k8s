@@ -56,3 +56,10 @@ def test_success_definer_double_returns_expected_criterion_shape(fake_success_de
 
     assert isinstance(criterion, SuccessCriterion)
     assert criterion.metric and criterion.comparison
+
+
+def test_check_regression_raises_for_unknown_comparison_operator():
+    criterion = SuccessCriterion(metric="test_metric", target=5, baseline=0, comparison="not_a_real_operator")
+
+    with pytest.raises(ValueError):
+        check_regression(criterion, {"test_metric": 5})
