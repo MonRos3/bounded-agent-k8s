@@ -41,6 +41,10 @@ _IRREVERSIBLE_REASON = (
 _PDB_BREACH_REASON = (
     "Blocked: this action would breach the PDB floor (no headroom remaining)."
 )
+_TARGET_NOT_FOUND_REASON = (
+    "Blocked: target not found — the agent's view of cluster state is "
+    "stale; refusing to act on a nonexistent target."
+)
 
 
 class Gate:
@@ -68,7 +72,9 @@ class Gate:
         """Classify `action` given `state` and return a Decision.
 
         Composition contract: look up the Rule for action.tool via
-        self._policy — an unconfigured tool, or a protected zone in
+        self._policy — an unconfigured tool, a nonexistent target
+        (state.facts["target_exists"] is False — a stale-world precondition
+        checked before any risk judgment), or a protected zone in
         state.facts, forces BLOCK regardless of the rule's default tier.
         Call self._rollback_planner.plan(action, state); a None result means
         the action is irreversible and forces at least APPROVE tier
@@ -82,6 +88,9 @@ class Gate:
 
         if not self._policy.is_allowed(action.tool):
             return self._blocked(action, f"Blocked: '{action.tool}' is not an allowed action (default-deny).")
+
+        if facts.get("target_exists") is False:
+            return self._blocked(action, _TARGET_NOT_FOUND_REASON)
 
         if facts.get("protected", False):
             return self._blocked(action, _PROTECTED_REASON)
