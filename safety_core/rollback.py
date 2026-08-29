@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from safety_core.audit import AuditEvent
-from safety_core.types import Action, State
+from safety_core.types import Action, Decision, State, Tier
 
 
 @dataclass(frozen=True)
@@ -50,12 +51,40 @@ class RollbackRegistry:
     manages the association and the invocation contract.
     """
 
+    def __init__(self) -> None:
+        self._plans: dict[str, RollbackPlan] = {}
+
     def register(self, trace_id: str, plan: RollbackPlan) -> None:
         """Associate `plan` with `trace_id` for later invocation."""
-        raise NotImplementedError
+        self._plans[trace_id] = plan
 
     def invoke(self, trace_id: str) -> AuditEvent:
         """Execute the rollback plan registered for `trace_id` and return the
         resulting audit event.
+
+        The audited Action/Decision describe the rollback invocation itself
+        (register/invoke never receive one for the original proposal) — the
+        event's `detail` carries the plan's target_state.
         """
-        raise NotImplementedError
+        plan = self._plans[trace_id]
+        action = Action(
+            tool="rollback",
+            args=dict(plan.detail),
+            rationale=f"Automated rollback via {plan.method} for trace {trace_id}.",
+        )
+        decision = Decision(
+            tier=Tier.AUTO,
+            reason="Rollback executed to restore target_state.",
+            reversible=False,
+            scope=trace_id,
+            rollback=None,
+            success=None,
+        )
+        return AuditEvent(
+            trace_id=trace_id,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            step="rollback_invoked",
+            action=action,
+            decision=decision,
+            detail=dict(plan.target_state),
+        )

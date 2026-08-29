@@ -61,7 +61,7 @@ This design uses four controls to constrain an agent's influence, listed in orde
 - deterministic allow/deny
 - the authority/final check
 
-(3) Scoped IAM; pivilege floor
+(3) Scoped IAM; privilege floor
 
 - least-privilege credentials
 - even a gate can't exceed this

@@ -13,7 +13,6 @@ if [ -z "$hits" ]; then echo "  $PASS no domain terms in safety_core/"; else
 check "safety_core imports cleanly" "python -c 'import safety_core' 2>/dev/null"
 check "types.py uses frozen dataclasses" "grep -q 'frozen=True' safety_core/types.py"
 check "abstract interfaces use ABC/abstractmethod" "grep -rq 'abstractmethod' safety_core/"
-check "gate.classify not yet implemented" "grep -Eq 'NotImplementedError|\.\.\.' safety_core/gate.py"
 
 echo ""
 echo "== Task 2: skeleton & harness =="
