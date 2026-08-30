@@ -21,6 +21,7 @@ from k8s_agent.model_client import ModelClient
 from k8s_agent.policy_config import DEMO_POLICY
 from k8s_agent.prompt import build_tool_schema
 from k8s_agent.proposal_types import ProposedAction
+from k8s_agent.recovery import RecoveryResult, observe_and_recover, resolve_recovery_target, should_observe_and_recover
 from k8s_agent.validation import validate_and_convert
 from safety_core.audit import Auditor
 from safety_core.guardrails import Guardrails
@@ -70,6 +71,7 @@ class AgentResult:
     action: Action | None
     decision: Decision | None
     surfaced_message: str
+    recovery: RecoveryResult | None = None
 
 
 def run_agent_loop(
@@ -131,13 +133,23 @@ def run_agent_loop(
     name = action.args[_NAME_ARG_KEY[action.tool]]
     namespace = action.args["namespace"]
     decision = classify_live(action, name, namespace, cluster_client)
-
-    execution = execute_approved_action(action, cluster_client) if decision.tier == Tier.AUTO else None
-    surfaced_message = guardrails.redact_output(_surfaced_message(decision, action, execution))
-
     auditor.record("classified", trace_id=trace_id, action=action, decision=decision, detail={})
 
-    return AgentResult(trace_id, AgentOutcome.DECIDED, proposed, action, decision, surfaced_message)
+    recovery: RecoveryResult | None = None
+    recovery_target = None
+    if decision.tier == Tier.AUTO and should_observe_and_recover(action, decision):
+        # Resolved before execution: delete_pod's target pod won't exist
+        # to resolve an owner from once execute_approved_action runs.
+        recovery_target = resolve_recovery_target(action, namespace, cluster_client)
+
+    execution = execute_approved_action(action, cluster_client) if decision.tier == Tier.AUTO else None
+
+    if recovery_target is not None:
+        recovery = observe_and_recover(action, decision, recovery_target, namespace, cluster_client, auditor, trace_id)
+
+    surfaced_message = guardrails.redact_output(_surfaced_message(decision, action, execution))
+
+    return AgentResult(trace_id, AgentOutcome.DECIDED, proposed, action, decision, surfaced_message, recovery)
 
 
 def handle_code_push(

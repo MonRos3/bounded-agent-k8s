@@ -192,6 +192,25 @@ class ClusterClient:
         except ApiException as exc:
             return ExecutionResult(success=False, detail={"error": str(exc), "status": exc.status})
 
+    def execute_rollback(self, method: str, detail: dict[str, Any]) -> ExecutionResult:
+        """Execute a predefined rollback mechanism — deterministic, no
+        classification, no model. `method`/`detail` come from a
+        RollbackPlan already fixed at classify time
+        (safety_core.rollback.RollbackPlan); this method only knows how
+        to carry a mechanism out, it never decides whether to roll back
+        or what a plan means. Only "scale_to" is implemented for real —
+        a genuine "rollout_undo" (reverting a Deployment's pod template
+        to a prior revision's ReplicaSet) is real, separate Kubernetes
+        work no current scenario in this demo actually exercises; rather
+        than fake it, this returns an honest failure so a caller never
+        mistakes "not implemented yet" for "recovered."
+        """
+        if method == "scale_to":
+            return self.scale_deployment(detail["deployment"], detail["namespace"], detail["replicas"])
+        return ExecutionResult(
+            success=False, detail={"error": f"rollback method {method!r} has no execution implementation yet"}
+        )
+
     def restart_deployment(self, name: str, namespace: str) -> ExecutionResult:
         """Patch the pod template's restart annotation — the same
         mechanism `kubectl rollout restart` uses; always creates a new

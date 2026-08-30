@@ -11,6 +11,7 @@ from k8s_agent.agent import AgentOutcome, execute_approved_action, run_agent_loo
 from k8s_agent.cluster import DeploymentNotFoundError, ExecutionResult
 from k8s_agent.cluster_types import DeploymentState
 from k8s_agent.proposal_types import ProposedAction
+from k8s_agent.recovery import RecoveryOutcome
 from safety_core.audit import AuditEvent, AuditSink, Auditor
 from safety_core.guardrails import Guardrails
 from safety_core.types import Action, Tier
@@ -67,6 +68,16 @@ class FakeClusterClient:
     def delete_persistent_volume_claim(self, name, namespace):
         return ExecutionResult(success=True, detail={"simulated": True})
 
+    def observe_outcome(self, deployment, namespace, metric, timeout_seconds=None):
+        # Deliberately generous: trivially satisfies any "gte" criterion
+        # these tests' small target_replicas values could produce, so
+        # existing AUTO-tier tests never accidentally trigger a fake
+        # regression/rollback just by exercising the new wiring.
+        return {metric: 999}
+
+    def execute_rollback(self, method, detail):
+        return ExecutionResult(success=True, detail={"method": method})
+
 
 _HEALTHY_STATE = DeploymentState(
     namespace="bounded-agent-demo",
@@ -108,6 +119,29 @@ def test_valid_proposal_flows_to_gate_and_returns_expected_decision():
     assert result.outcome == AgentOutcome.DECIDED
     assert result.decision.tier == Tier.AUTO
     assert result.action.tool == "scale_deployment"
+
+
+def test_auto_tier_runs_observe_and_recover_and_records_no_regression_outcome():
+    """Proves the wiring exists at the loop level: AUTO-tier execution is
+    followed by a real observe/recover cycle. The regression-triggers
+    -rollback proof itself lives in tests/test_recovery.py against a live
+    cluster — this only confirms run_agent_loop actually calls it and
+    surfaces the outcome, using FakeClusterClient's deliberately generous
+    observe_outcome default (never regresses).
+    """
+    proposed = ProposedAction(
+        tool="scale_deployment",
+        args={"namespace": "bounded-agent-demo", "deployment": "healthy-web", "target_replicas": 5},
+        advisory_note="Scaling out to handle load.",
+        raw_response="...",
+    )
+    kwargs = _loop(model_client=_mock_model(proposed))
+
+    result = run_agent_loop("scale healthy-web to 5 replicas", **kwargs)
+
+    assert result.decision.tier == Tier.AUTO
+    assert result.recovery is not None
+    assert result.recovery.outcome == RecoveryOutcome.NO_REGRESSION
 
 
 def test_non_allow_listed_tool_fails_closed_at_validation():

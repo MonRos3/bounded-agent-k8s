@@ -15,10 +15,13 @@ def build_facts(deployment_state: DeploymentState, protected_zones: set[str]) ->
     """Build the facts dict the Gate reads out of a DeploymentState.
 
     `protected` and `has_rollback_target` are computed; `healthy_replicas`,
-    `pdb_min_available`, and `mid_batch` pass through as-is; `revision` is
-    the current one (`revisions[-1]` — a DeploymentState with no revisions
-    at all is a caller-contract violation and raises IndexError rather than
-    being silently handled).
+    `desired_replicas`, `pdb_min_available`, and `mid_batch` pass through
+    as-is; `revision` is the current one (`revisions[-1]` — a
+    DeploymentState with no revisions at all is a caller-contract
+    violation and raises IndexError rather than being silently handled).
+    `desired_replicas` isn't read by the Gate itself — it exists so a
+    RollbackPlanner can build a scale-type rollback plan that carries the
+    prior replica count as its target, not just a revision number.
 
     Two facts the Gate can read are never set here, deliberately:
     `dry_run_diff` has no source in this function's inputs (a real diff
@@ -31,6 +34,7 @@ def build_facts(deployment_state: DeploymentState, protected_zones: set[str]) ->
     """
     return {
         "healthy_replicas": deployment_state.healthy_replicas,
+        "desired_replicas": deployment_state.desired_replicas,
         "pdb_min_available": deployment_state.pdb_min_available,
         "protected": deployment_state.namespace in protected_zones,
         "has_rollback_target": len(deployment_state.revisions) >= 2,

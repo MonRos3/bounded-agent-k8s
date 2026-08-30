@@ -92,6 +92,31 @@ def test_observe_outcome_reports_below_target_on_unready(cluster: ClusterClient)
         cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, before.desired_replicas)
 
 
+def test_execute_rollback_scale_to_restores_replica_count(cluster: ClusterClient):
+    before = cluster.get_deployment_state(_HEALTHY_DEPLOYMENT, _NAMESPACE)
+
+    try:
+        cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, before.desired_replicas + 1)
+
+        result = cluster.execute_rollback(
+            "scale_to",
+            {"namespace": _NAMESPACE, "deployment": _HEALTHY_DEPLOYMENT, "replicas": before.desired_replicas},
+        )
+
+        assert result.success
+        after = cluster.get_deployment_state(_HEALTHY_DEPLOYMENT, _NAMESPACE)
+        assert after.desired_replicas == before.desired_replicas
+    finally:
+        cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, before.desired_replicas)
+
+
+def test_execute_rollback_returns_failure_for_unimplemented_method(cluster: ClusterClient):
+    result = cluster.execute_rollback("rollout_undo", {"target_revision": 1})
+
+    assert result.success is False
+    assert "rollout_undo" in result.detail["error"]
+
+
 def test_dry_run_diff_does_not_mutate_cluster(cluster: ClusterClient):
     """The critical property: a server-side dry run must persist nothing.
     Proves it by re-querying live state after the dry run and asserting

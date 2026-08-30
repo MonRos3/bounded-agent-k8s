@@ -31,6 +31,7 @@ from k8s_agent.audit_sink import FileAuditSink
 from k8s_agent.cluster import ClusterClient
 from k8s_agent.cluster_types import DryRunDiff
 from k8s_agent.model_client import ModelClient
+from k8s_agent.recovery import observe_and_recover, resolve_recovery_target, should_observe_and_recover
 from safety_core.audit import Auditor
 from safety_core.guardrails import Guardrails
 from safety_core.types import Tier
@@ -166,20 +167,38 @@ def handle_approve_tier(
     cluster_client: ClusterClient,
     console: Console,
     guardrails: Guardrails,
+    auditor: Auditor,
     *,
     ask: Callable[..., str] = Prompt.ask,
 ) -> None:
     """Show the approval prompt, read the decision, and act on it: approve
     calls execute_approved_action (the only call site outside the AUTO
-    path — never reimplemented here) and shows the result; reject stops,
+    path — never reimplemented here), then — for a reversible action with
+    a success criterion — runs the same observe/regress/recover cycle the
+    AUTO path runs, audited under the same trace id; reject stops,
     showing the rejection. Either way, control returns to the REPL loop
-    for the next request.
+    for the next request. No recovery detail is surfaced here (M5.3's
+    job) — it only shows up in the audit stream.
     """
     render_approval_prompt(console, operator_request, result, guardrails, cluster_client)
 
     if prompt_approval(ask=ask):
-        assert result.action is not None, "APPROVE tier always carries an Action"
-        execution = execute_approved_action(result.action, cluster_client)
+        action = result.action
+        decision = result.decision
+        assert action is not None and decision is not None, "APPROVE tier always carries an Action and a Decision"
+
+        namespace = action.args["namespace"]
+        recovery_target = None
+        if should_observe_and_recover(action, decision):
+            # Resolved before execution: delete_pod's target pod won't
+            # exist to resolve an owner from once it's been deleted.
+            recovery_target = resolve_recovery_target(action, namespace, cluster_client)
+
+        execution = execute_approved_action(action, cluster_client)
+
+        if recovery_target is not None:
+            observe_and_recover(action, decision, recovery_target, namespace, cluster_client, auditor, result.trace_id)
+
         status = "succeeded" if execution.success else "failed"
         console.print(f"[green]approved[/green] — executed ({status}): {_format_args(execution.detail, guardrails)}")
     else:
@@ -223,7 +242,7 @@ def run_repl(
         render_decision_path(console, operator_request, result, guardrails)
 
         if result.outcome == AgentOutcome.DECIDED and result.decision is not None and result.decision.tier == Tier.APPROVE:
-            handle_approve_tier(operator_request, result, cluster_client, console, guardrails, ask=ask)
+            handle_approve_tier(operator_request, result, cluster_client, console, guardrails, auditor, ask=ask)
 
 
 def _ensure_cluster_reachable() -> ClusterClient:

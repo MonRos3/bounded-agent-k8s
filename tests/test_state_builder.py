@@ -80,6 +80,7 @@ def test_build_facts_keys_match_gate_vocabulary():
 
     assert set(facts.keys()) == {
         "healthy_replicas",
+        "desired_replicas",
         "pdb_min_available",
         "protected",
         "has_rollback_target",
