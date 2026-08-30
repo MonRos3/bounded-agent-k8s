@@ -31,7 +31,13 @@ from k8s_agent.audit_sink import FileAuditSink
 from k8s_agent.cluster import ClusterClient
 from k8s_agent.cluster_types import DryRunDiff
 from k8s_agent.model_client import ModelClient
-from k8s_agent.recovery import observe_and_recover, resolve_recovery_target, should_observe_and_recover
+from k8s_agent.recovery import (
+    RecoveryOutcome,
+    RecoveryResult,
+    observe_and_recover,
+    resolve_recovery_target,
+    should_observe_and_recover,
+)
 from safety_core.audit import Auditor
 from safety_core.guardrails import Guardrails
 from safety_core.types import Tier
@@ -82,6 +88,37 @@ def render_decision_path(console: Console, operator_request: str, result: AgentR
     style = _TIER_STYLE[decision.tier]
     console.print(f"[bold]classified[/bold]  [{style}]{decision.tier.value.upper()}[/{style}]  {escape(decision.reason)}")
     console.print(f"[bold]action[/bold]      [{style}]{escape(result.surfaced_message)}[/{style}]")
+
+
+def render_recovery(console: Console, recovery: RecoveryResult) -> None:
+    """The observe -> regress -> recover cycle's outcome: a curated block,
+    clearly separated from the decision path above it, rendered once the
+    (synchronous) cycle has already completed — observe_and_recover
+    blocks until it's done, so there is no live "waiting for
+    readiness..." indicator here, only the finished result. Nothing here
+    is a prompt: any rollback shown already happened, visibly automatic —
+    the operator never approves the recovery itself.
+    """
+    if recovery.outcome == RecoveryOutcome.SKIPPED:
+        return
+
+    console.rule("recovery", style="dim")
+    observed = ", ".join(f"{k}={v}" for k, v in (recovery.observed or {}).items())
+    console.print(f"[bold]observed[/bold]    {escape(observed)}")
+
+    if recovery.outcome == RecoveryOutcome.NO_REGRESSION:
+        console.print("[green]regression[/green]  none — target met")
+        return
+
+    console.print("[red]regression[/red]  REGRESSED — target not met")
+    console.print("[yellow]recovery[/yellow]   rolling back automatically (deterministic — no approval needed)")
+
+    execution = recovery.rollback_execution
+    if execution is not None and execution.success:
+        console.print(f"[green]recovered[/green]  restored to prior state: {escape(str(execution.detail))}")
+    else:
+        detail = execution.detail if execution is not None else {}
+        console.print(f"[red]recovery failed[/red] rollback did not succeed: {escape(str(detail))}")
 
 
 def _render_dry_run_diff(diff: DryRunDiff, guardrails: Guardrails) -> str:
@@ -175,10 +212,9 @@ def handle_approve_tier(
     calls execute_approved_action (the only call site outside the AUTO
     path — never reimplemented here), then — for a reversible action with
     a success criterion — runs the same observe/regress/recover cycle the
-    AUTO path runs, audited under the same trace id; reject stops,
-    showing the rejection. Either way, control returns to the REPL loop
-    for the next request. No recovery detail is surfaced here (M5.3's
-    job) — it only shows up in the audit stream.
+    AUTO path runs, audited under the same trace id and rendered the same
+    way; reject stops, showing the rejection. Either way, control returns
+    to the REPL loop for the next request.
     """
     render_approval_prompt(console, operator_request, result, guardrails, cluster_client)
 
@@ -196,11 +232,14 @@ def handle_approve_tier(
 
         execution = execute_approved_action(action, cluster_client)
 
-        if recovery_target is not None:
-            observe_and_recover(action, decision, recovery_target, namespace, cluster_client, auditor, result.trace_id)
-
         status = "succeeded" if execution.success else "failed"
         console.print(f"[green]approved[/green] — executed ({status}): {_format_args(execution.detail, guardrails)}")
+
+        if recovery_target is not None:
+            recovery = observe_and_recover(
+                action, decision, recovery_target, namespace, cluster_client, auditor, result.trace_id
+            )
+            render_recovery(console, recovery)
     else:
         console.print("[red]rejected[/red] — no action taken.")
 
@@ -240,6 +279,8 @@ def run_repl(
             auditor=auditor,
         )
         render_decision_path(console, operator_request, result, guardrails)
+        if result.recovery is not None:
+            render_recovery(console, result.recovery)
 
         if result.outcome == AgentOutcome.DECIDED and result.decision is not None and result.decision.tier == Tier.APPROVE:
             handle_approve_tier(operator_request, result, cluster_client, console, guardrails, auditor, ask=ask)

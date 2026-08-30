@@ -24,7 +24,7 @@ eval:
 	python3 tests/eval_llm.py --runs $(RUNS)
 
 demo:
-	@echo "demo: not yet implemented"
+	bash scripts/demo_regression.sh
 
 cli:
 	python3 -m k8s_agent.cli

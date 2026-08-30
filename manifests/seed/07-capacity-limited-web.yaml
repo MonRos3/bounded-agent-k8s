@@ -1,0 +1,38 @@
+# Starts at 1 replica with a small, always-schedulable placeholder CPU
+# request. scripts/demo_regression.sh resizes the request at demo-run
+# time to exactly half the live node's allocatable CPU (plus a margin) --
+# static YAML can't know that ahead of time. Exists solely for the M5.3
+# regression demo; scale_deployment on it is AUTO-tier (DEMO_POLICY), so
+# the demo runs through the fully-automatic recovery path.
+#
+# Deliberately no PDB, unlike the other seed deployments: Gate._pdb_headroom
+# blocks on *current* healthy_replicas <= pdb_min_available regardless of
+# which direction the action moves replica count, so a 1-replica
+# deployment with minAvailable: 1 would BLOCK a scale-*up* too (headroom
+# already 0, confirmed live) -- an artifact of the Gate's own generic,
+# direction-agnostic headroom check, not something this deployment's
+# capacity-focused scenario should be entangled with.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: capacity-limited-web
+  namespace: bounded-agent-demo
+  labels:
+    app: capacity-limited-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: capacity-limited-web
+  template:
+    metadata:
+      labels:
+        app: capacity-limited-web
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          resources:
+            requests:
+              cpu: 100m
+              memory: 16Mi
