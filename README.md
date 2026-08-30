@@ -110,7 +110,16 @@ the deterministic core specifically (target: ≥90%; currently ~99%).
 
 ### 3. Run a request through the agent
 
-There's no CLI yet (see "Not yet built" below) — call the loop directly:
+The interactive way — a `rich`-formatted REPL that shows the curated
+decision path and, on APPROVE-tier, prompts for approve/reject before
+executing:
+
+```sh
+make cli                  # or: python3 -m k8s_agent.cli
+```
+
+Or call the loop directly (still the right way to script something
+non-interactively, e.g. from `handle_code_push`):
 
 ```python
 from k8s_agent.agent import run_agent_loop
@@ -136,12 +145,30 @@ per audit step (trace id, action, decision, detail), and `result.decision`
 carries the gate's tier, its reason, and (when relevant) the rollback plan
 and success criterion.
 
+### Watching the system
+
+Four streams are worth watching, each for a different audience:
+
+1. **The operator terminal** — `make cli` (or `python3 -m k8s_agent.cli`).
+   The curated decision view: request → screened → proposed → validated →
+   classified, color-coded by tier (green AUTO, yellow APPROVE, red
+   BLOCK), and on APPROVE-tier the full approval prompt before it asks
+   approve/reject. This is deliberately *not* a log — full detail lives in
+   the audit stream below.
+2. **The audit stream** — `tail -f audit_logs/<file>.jsonl` (the CLI
+   prints the exact path at startup). One JSON line per step of every
+   trace, in full: `trace_id`, `timestamp`, `step`, `action`, `decision`,
+   `detail`. Use the trace id printed in the operator terminal to pull the
+   full detail behind one decision: `grep <trace-id>
+   audit_logs/<file>.jsonl`.
+3. **Ollama, verbose** — the model's raw request/response. If Ollama is
+   running as a local process, its own stdout shows each request; if it's
+   containerized, `docker logs -f ollama` (or your container's name).
+4. **Docker/MiniStack, verbose** — `docker logs -f ministack` shows the
+   Bedrock-proxy round trips between `ModelClient` and Ollama.
+
 ### Not yet built
 
-- **Model eval suite** — quality/correctness measurement for the model's
-  proposals isn't implemented yet. `tests/test_model_client.py` and
-  `tests/test_agent_loop.py` cover the *plumbing* (parsing, validation,
-  routing) against stubbed responses, not the real model's judgment.
 - **Automatic rollback invocation** — `RollbackPlan`s are generated and
   attached to every `Decision`, but nothing yet observes post-execution
   state and invokes one automatically on regression.
@@ -149,8 +176,8 @@ and success criterion.
   are unit-tested, just not wired into the live loop.
 - **Kubescape scan → remediate → rescan loop** — no Kubescape integration
   exists in `k8s_agent/` yet.
-- **CLI / interactive entry point** — `run_agent_loop` is currently only
-  callable from Python directly, as above; `make demo` is still a stub.
+- **Web UI** — the operator console is terminal-only (`k8s_agent/cli.py`);
+  a web UI is a possible post-M5 follow-up, not started.
 
 ## Bounded AI Agent Design Overview
 
