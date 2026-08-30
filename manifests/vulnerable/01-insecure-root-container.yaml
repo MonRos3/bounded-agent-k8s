@@ -1,0 +1,32 @@
+# INTENTIONALLY INSECURE — demo fixture for M6.1's Kubescape compliance
+# scan. Explicitly runs as root (runAsUser: 0, no runAsNonRoot) — trips
+# Kubescape's "Non-root containers" control (NSA framework, C-0013).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-root-container
+  namespace: bounded-agent-demo-insecure
+  labels:
+    app: insecure-root-container
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: insecure-root-container
+  template:
+    metadata:
+      labels:
+        app: insecure-root-container
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          securityContext:
+            runAsUser: 0
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

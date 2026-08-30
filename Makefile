@@ -1,4 +1,4 @@
-.PHONY: verify verify-foundation reset seed test test-integration eval demo cli
+.PHONY: verify verify-foundation reset seed seed-insecure reset-insecure test test-integration eval demo cli
 
 RUNS ?= 4
 
@@ -13,6 +13,12 @@ reset:
 
 seed:
 	bash scripts/seed.sh
+
+seed-insecure:
+	bash scripts/seed_insecure.sh
+
+reset-insecure:
+	bash scripts/reset_insecure.sh
 
 test:
 	python -m pytest

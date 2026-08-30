@@ -1,0 +1,34 @@
+# INTENTIONALLY INSECURE — demo fixture for M6.1's Kubescape compliance
+# scan. Explicitly allows privilege escalation (a process inside the
+# container can gain more privileges than its parent) — trips
+# Kubescape's "Allow privilege escalation" control (NSA framework,
+# C-0016).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-privilege-escalation
+  namespace: bounded-agent-demo-insecure
+  labels:
+    app: insecure-privilege-escalation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: insecure-privilege-escalation
+  template:
+    metadata:
+      labels:
+        app: insecure-privilege-escalation
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          securityContext:
+            allowPrivilegeEscalation: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
