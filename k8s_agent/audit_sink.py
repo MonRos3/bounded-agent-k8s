@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from pathlib import Path
 
 from safety_core.audit import AuditEvent, AuditSink
 
@@ -19,3 +20,21 @@ class StdoutAuditSink(AuditSink):
 
     def emit(self, event: AuditEvent) -> None:
         print(json.dumps(dataclasses.asdict(event), default=str))
+
+
+class FileAuditSink(AuditSink):
+    """Writes each event as one JSON line to `path` — same shape as
+    StdoutAuditSink, but to a file meant to be watched with `tail -f`
+    while the operator terminal (k8s_agent/cli.py) stays curated. Opens,
+    appends, and closes on every emit rather than holding a handle open:
+    event volume is a handful per operator request, and this guarantees
+    every write is immediately visible to a concurrent `tail -f`.
+    """
+
+    def __init__(self, path: Path | str) -> None:
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def emit(self, event: AuditEvent) -> None:
+        with open(self._path, "a") as f:
+            f.write(json.dumps(dataclasses.asdict(event), default=str) + "\n")

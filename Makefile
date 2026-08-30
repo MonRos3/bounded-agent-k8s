@@ -1,4 +1,4 @@
-.PHONY: verify verify-foundation reset seed test test-integration eval demo
+.PHONY: verify verify-foundation reset seed test test-integration eval demo cli
 
 RUNS ?= 4
 
@@ -25,3 +25,6 @@ eval:
 
 demo:
 	@echo "demo: not yet implemented"
+
+cli:
+	python3 -m k8s_agent.cli
