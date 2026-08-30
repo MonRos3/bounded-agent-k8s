@@ -9,12 +9,13 @@ only, production always observes for real.
 
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock
 
 import pytest
 from kubernetes import client, config
 
-from k8s_agent.cluster import ClusterClient
+from k8s_agent.cluster import ClusterClient, ExecutionResult
 from k8s_agent.recovery import (
     RecoveryOutcome,
     observe_and_recover,
@@ -63,6 +64,57 @@ def _scale_to_plan(prior_replicas: int) -> RollbackPlan:
         detail={"namespace": _NAMESPACE, "deployment": _HEALTHY_DEPLOYMENT, "replicas": prior_replicas},
         target_state={"replicas": prior_replicas},
     )
+
+
+def _update_resource_limits_action(memory: str) -> Action:
+    return Action(
+        tool="update_resource_limits",
+        args={"namespace": _NAMESPACE, "deployment": _HEALTHY_DEPLOYMENT, "container": "web", "memory_limit": memory},
+        rationale="",
+    )
+
+
+def _rollout_undo_plan(target_revision: int) -> RollbackPlan:
+    """Deliberately mirrors K8sRollbackPlanner's real detail shape for a
+    non-scale tool: {**action.args, "target_revision": ...} -- so this
+    test exercises the exact plan shape the real planner would build,
+    not a hand-simplified stand-in.
+    """
+    return RollbackPlan(
+        method="rollout_undo",
+        detail={
+            "namespace": _NAMESPACE,
+            "deployment": _HEALTHY_DEPLOYMENT,
+            "container": "web",
+            "memory_limit": "unused-once-rolled-back",
+            "target_revision": target_revision,
+        },
+        target_state={"revision": target_revision},
+    )
+
+
+def _container_memory_limit(namespace: str, deployment: str, container: str) -> str | None:
+    dep = client.AppsV1Api().read_namespaced_deployment(deployment, namespace)
+    for c in dep.spec.template.spec.containers:
+        if c.name == container:
+            return (c.resources.limits or {}).get("memory") if c.resources else None
+    return None
+
+
+def _wait_for_new_revision(cluster: ClusterClient, deployment: str, namespace: str, previous_count: int) -> list[int]:
+    """The Deployment controller creates a new ReplicaSet (and assigns
+    its revision annotation) asynchronously after a template-changing
+    patch — reading revisions back immediately can race it. Polls until
+    the revision list has genuinely grown, so callers never compute a
+    rollback target off a stale list. Same pattern as
+    tests/test_cluster_smoke.py's helper of the same name.
+    """
+    deadline = time.monotonic() + 10
+    revisions = cluster.get_deployment_state(deployment, namespace).revisions
+    while len(revisions) <= previous_count and time.monotonic() < deadline:
+        time.sleep(0.5)
+        revisions = cluster.get_deployment_state(deployment, namespace).revisions
+    return revisions
 
 
 # --- should_observe_and_recover: pure logic, no cluster needed ---
@@ -220,3 +272,66 @@ def test_recovery_never_calls_the_model(cluster: ClusterClient):
         assert model_client.mock_calls == []
     finally:
         cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, before.desired_replicas)
+
+
+@pytest.mark.integration
+def test_regression_on_template_mutating_tool_triggers_deterministic_rollback(cluster: ClusterClient):
+    """Proves the recovery loop is now complete for revision-based
+    rollbacks, not just scale: a real template change, forced regression,
+    real rollback via "rollout_undo" -- verified by reading the live
+    template back, not by trusting the outcome.
+    """
+    container = "web"
+    original_memory = _container_memory_limit(_NAMESPACE, _HEALTHY_DEPLOYMENT, container)
+    before_count = len(cluster.get_deployment_state(_HEALTHY_DEPLOYMENT, _NAMESPACE).revisions)
+    action = _update_resource_limits_action("777Mi")
+    auditor = Auditor(FakeAuditSink())
+    trace_id = auditor.new_trace()
+
+    try:
+        cluster.update_resource_limits(_HEALTHY_DEPLOYMENT, _NAMESPACE, container, memory="777Mi")
+        assert _container_memory_limit(_NAMESPACE, _HEALTHY_DEPLOYMENT, container) == "777Mi"
+
+        revisions = _wait_for_new_revision(cluster, _HEALTHY_DEPLOYMENT, _NAMESPACE, before_count)
+        target_revision = revisions[-2]
+        decision = _decision_with(success=_criterion(4, 4), rollback=_rollout_undo_plan(target_revision))
+
+        forced_regression = lambda deployment, namespace, metric: {"healthy_replicas": 0}
+        result = observe_and_recover(
+            action, decision, _HEALTHY_DEPLOYMENT, _NAMESPACE, cluster, auditor, trace_id, observe=forced_regression
+        )
+
+        assert result.outcome == RecoveryOutcome.REGRESSED_AND_RECOVERED
+        assert _container_memory_limit(_NAMESPACE, _HEALTHY_DEPLOYMENT, container) == original_memory
+    finally:
+        cluster.update_resource_limits(_HEALTHY_DEPLOYMENT, _NAMESPACE, container, memory=original_memory)
+
+
+def test_observe_and_recover_passes_resolved_deployment_to_execute_rollback_not_plan_detail():
+    """Regression guard: delete_pod's action.args never has a
+    "deployment" key (only "pod"), so a real rollout_undo plan for it
+    can't carry one in plan.detail either. observe_and_recover must use
+    the already-resolved deployment/namespace it observed against, not
+    trust plan.detail's own (possibly absent) values.
+    """
+    action = Action(tool="delete_pod", args={"namespace": _NAMESPACE, "pod": "healthy-web-abc123"}, rationale="")
+    decision = _decision_with(
+        success=_criterion(4, 4),
+        rollback=RollbackPlan(
+            method="rollout_undo",
+            detail={"namespace": _NAMESPACE, "pod": "healthy-web-abc123", "target_revision": 3},
+            target_state={"revision": 3},
+        ),
+    )
+    cluster_client = MagicMock()
+    cluster_client.execute_rollback.return_value = ExecutionResult(success=True, detail={})
+    auditor = Auditor(FakeAuditSink())
+
+    observe_and_recover(
+        action, decision, _HEALTHY_DEPLOYMENT, _NAMESPACE, cluster_client, auditor, "trace-1",
+        observe=lambda d, n, m: {"healthy_replicas": 0},
+    )
+
+    _, detail_arg = cluster_client.execute_rollback.call_args[0]
+    assert detail_arg["deployment"] == _HEALTHY_DEPLOYMENT
+    assert detail_arg["namespace"] == _NAMESPACE
