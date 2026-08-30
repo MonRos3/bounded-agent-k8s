@@ -5,6 +5,8 @@ stays green in a cluster-less environment.
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from kubernetes import client, config
 
@@ -24,6 +26,33 @@ def _first_pod_name(namespace: str, app_label: str) -> str:
     """
     pods = client.CoreV1Api().list_namespaced_pod(namespace, label_selector=f"app={app_label}")
     return pods.items[0].metadata.name
+
+
+def _wait_for_new_revision(cluster: ClusterClient, deployment: str, namespace: str, previous_count: int) -> list[int]:
+    """The Deployment controller creates a new ReplicaSet (and assigns
+    its revision annotation) asynchronously after a template-changing
+    patch — reading revisions back immediately can race it. Polls until
+    the revision list has genuinely grown, so callers never compute a
+    rollback target off a stale list.
+    """
+    deadline = time.monotonic() + 10
+    revisions = cluster.get_deployment_state(deployment, namespace).revisions
+    while len(revisions) <= previous_count and time.monotonic() < deadline:
+        time.sleep(0.5)
+        revisions = cluster.get_deployment_state(deployment, namespace).revisions
+    return revisions
+
+
+def _container_memory_limit(namespace: str, deployment: str, container: str) -> str | None:
+    """Reads a container's live memory limit directly via the raw client
+    — ClusterClient has no getter for it. Used to verify a rollback
+    actually restored the template, not just that the call succeeded.
+    """
+    dep = client.AppsV1Api().read_namespaced_deployment(deployment, namespace)
+    for c in dep.spec.template.spec.containers:
+        if c.name == container:
+            return (c.resources.limits or {}).get("memory") if c.resources else None
+    return None
 
 
 @pytest.fixture(scope="module")
@@ -111,10 +140,43 @@ def test_execute_rollback_scale_to_restores_replica_count(cluster: ClusterClient
 
 
 def test_execute_rollback_returns_failure_for_unimplemented_method(cluster: ClusterClient):
-    result = cluster.execute_rollback("rollout_undo", {"target_revision": 1})
+    result = cluster.execute_rollback("some_future_mechanism", {})
 
     assert result.success is False
-    assert "rollout_undo" in result.detail["error"]
+    assert "some_future_mechanism" in result.detail["error"]
+
+
+def test_execute_rollback_rollout_undo_restores_prior_template(cluster: ClusterClient):
+    container = "web"
+    original_memory = _container_memory_limit(_NAMESPACE, _HEALTHY_DEPLOYMENT, container)
+    before_count = len(cluster.get_deployment_state(_HEALTHY_DEPLOYMENT, _NAMESPACE).revisions)
+
+    try:
+        cluster.update_resource_limits(_HEALTHY_DEPLOYMENT, _NAMESPACE, container, memory="777Mi")
+        assert _container_memory_limit(_NAMESPACE, _HEALTHY_DEPLOYMENT, container) == "777Mi"
+
+        revisions = _wait_for_new_revision(cluster, _HEALTHY_DEPLOYMENT, _NAMESPACE, before_count)
+        target_revision = revisions[-2]
+
+        result = cluster.execute_rollback(
+            "rollout_undo",
+            {"namespace": _NAMESPACE, "deployment": _HEALTHY_DEPLOYMENT, "target_revision": target_revision},
+        )
+
+        assert result.success
+        assert _container_memory_limit(_NAMESPACE, _HEALTHY_DEPLOYMENT, container) == original_memory
+    finally:
+        cluster.update_resource_limits(_HEALTHY_DEPLOYMENT, _NAMESPACE, container, memory=original_memory)
+
+
+def test_execute_rollback_rollout_undo_fails_honestly_when_no_target_revision(cluster: ClusterClient):
+    result = cluster.execute_rollback(
+        "rollout_undo",
+        {"namespace": _NAMESPACE, "deployment": _HEALTHY_DEPLOYMENT, "target_revision": 999999},
+    )
+
+    assert result.success is False
+    assert "999999" in result.detail["error"]
 
 
 def test_dry_run_diff_does_not_mutate_cluster(cluster: ClusterClient):

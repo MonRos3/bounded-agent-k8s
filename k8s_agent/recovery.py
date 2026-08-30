@@ -18,7 +18,7 @@ from typing import Callable
 
 from k8s_agent.cluster import ClusterClient, ExecutionResult
 from safety_core.audit import Auditor
-from safety_core.rollback import RollbackRegistry
+from safety_core.rollback import RollbackPlan, RollbackRegistry
 from safety_core.success import check_regression
 from safety_core.types import Action, Decision
 
@@ -113,10 +113,17 @@ def observe_and_recover(
 
     plan = decision.rollback
     assert plan is not None  # should_observe_and_recover already guaranteed this
-    rollback_execution = cluster_client.execute_rollback(plan.method, plan.detail)
+
+    # The already-resolved deployment/namespace this call just observed
+    # against always win over plan.detail's own values: delete_pod's
+    # action.args never had a "deployment" key to spread into the plan at
+    # classify time (only "pod"), so plan.detail alone can't carry one —
+    # this is the one place that already knows the right answer.
+    rollback_detail = {**plan.detail, "namespace": namespace, "deployment": deployment}
+    rollback_execution = cluster_client.execute_rollback(plan.method, rollback_detail)
 
     registry = RollbackRegistry()
-    registry.register(trace_id, plan)
+    registry.register(trace_id, RollbackPlan(method=plan.method, detail=rollback_detail, target_state=plan.target_state))
     event = registry.invoke(trace_id)
     auditor.record(
         event.step,

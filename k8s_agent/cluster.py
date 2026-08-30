@@ -198,18 +198,49 @@ class ClusterClient:
         RollbackPlan already fixed at classify time
         (safety_core.rollback.RollbackPlan); this method only knows how
         to carry a mechanism out, it never decides whether to roll back
-        or what a plan means. Only "scale_to" is implemented for real —
-        a genuine "rollout_undo" (reverting a Deployment's pod template
-        to a prior revision's ReplicaSet) is real, separate Kubernetes
-        work no current scenario in this demo actually exercises; rather
-        than fake it, this returns an honest failure so a caller never
-        mistakes "not implemented yet" for "recovered."
+        or what a plan means.
         """
         if method == "scale_to":
             return self.scale_deployment(detail["deployment"], detail["namespace"], detail["replicas"])
+        if method == "rollout_undo":
+            return self._execute_rollout_undo(detail["deployment"], detail["namespace"], detail.get("target_revision"))
         return ExecutionResult(
             success=False, detail={"error": f"rollback method {method!r} has no execution implementation yet"}
         )
+
+    def _execute_rollout_undo(self, name: str, namespace: str, target_revision: int | None) -> ExecutionResult:
+        """Revert a Deployment's pod template to the ReplicaSet recorded
+        under `target_revision` — the same mechanism `kubectl rollout
+        undo` uses. Builds the patch body via
+        `api_client.sanitize_for_serialization`, not `.to_dict()`: the
+        latter produces snake_case keys (e.g. `restart_policy`) the API
+        server doesn't recognize, which would silently drop most of the
+        template while the patch call still reports success — exactly
+        the failure mode this method must never produce.
+        """
+        if target_revision is None:
+            return ExecutionResult(success=False, detail={"error": "no target_revision to roll back to"})
+        try:
+            deployment = self._read_deployment(name, namespace)
+            app_label = deployment.spec.selector.match_labels.get("app", name)
+            replica_sets = self._apps.list_namespaced_replica_set(namespace, label_selector=f"app={app_label}")
+            target_rs = next(
+                (
+                    rs
+                    for rs in replica_sets.items
+                    if (rs.metadata.annotations or {}).get(_REVISION_ANNOTATION) == str(target_revision)
+                ),
+                None,
+            )
+            if target_rs is None:
+                return ExecutionResult(
+                    success=False, detail={"error": f"no ReplicaSet found for revision {target_revision} of '{name}'"}
+                )
+            template = self._apps.api_client.sanitize_for_serialization(target_rs.spec.template)
+            self._apps.patch_namespaced_deployment(name, namespace, {"spec": {"template": template}})
+            return ExecutionResult(success=True, detail={"reverted_to_revision": target_revision})
+        except (ApiException, DeploymentNotFoundError) as exc:
+            return ExecutionResult(success=False, detail={"error": str(exc)})
 
     def restart_deployment(self, name: str, namespace: str) -> ExecutionResult:
         """Patch the pod template's restart annotation — the same
