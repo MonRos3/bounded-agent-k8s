@@ -1,7 +1,10 @@
-.PHONY: verify reset seed test test-integration demo
+.PHONY: verify verify-foundation reset seed test test-integration demo
 
 verify:
 	bash scripts/verify.sh
+
+verify-foundation:
+	bash scripts/verify_foundation.sh
 
 reset:
 	bash scripts/reset.sh

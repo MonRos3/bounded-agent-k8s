@@ -33,15 +33,124 @@ never installed via `requirements.txt`:
 - [kubescape](https://kubescape.io/)
 - [Ollama](https://ollama.com/)
 
-### Quickstart
+### 1. Install and start each layer
+
+**Python venv:**
 
 ```sh
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 cp .env.example .env
+```
+
+**Ollama** (local model server):
+
+```sh
+ollama pull llama3.1
+ollama serve   # if not already running as a background service
+```
+
+**MiniStack** (local Bedrock-shaped endpoint, proxying to Ollama):
+
+```sh
+docker run -d --name ministack -p 4566:4566 \
+  -e MINISTACK_BEDROCK_PROXY_URL=http://host.docker.internal:11434/ \
+  ministackorg/ministack:latest
+```
+
+The `MINISTACK_BEDROCK_PROXY_URL` env var is what makes MiniStack forward
+`converse` calls to your real Ollama instance instead of returning a
+generic mock response — without it, `ModelClient` still gets a
+well-formed reply, just not a real model completion. `.env`'s
+`LAB_USE_AWS` flag switches `ModelClient`/`ClusterClient` between this
+local endpoint and real AWS with the same code.
+
+**minikube** (local Kubernetes cluster):
+
+```sh
+minikube start
+make seed     # applies manifests/seed/ — the demo namespaces/deployments/PDBs
+```
+
+`make reset` restores this same clean state later (e.g. after a demo run
+that scaled or deleted something). `make seed`/`make reset` are also what
+generate the rollout history some seeded deployments need.
+
+**Verify everything is up:**
+
+```sh
 make verify
 ```
+
+Checks each of the four layers independently and reports a ✓/✗ per layer,
+so a failure tells you exactly which one is down rather than a generic
+"environment not ready." It's fine — and expected — to have some layers
+down; the point is knowing which.
+
+`make verify-foundation` is a different, complementary check: not whether
+the runtime environment is reachable, but whether the *repo itself* is
+still structurally sound — `safety_core/` stays domain-independent (a
+grep for Kubernetes/AWS-specific terms leaking into it), expected
+scaffolding exists, `.env.example` hygiene holds. Safe to re-run any
+time as the project grows, not just at initial setup.
+
+### 2. Run the tests
+
+```sh
+make test              # full suite: unit tests always run; integration
+                        # tests skip gracefully (not fail) if MiniStack/
+                        # Ollama/minikube aren't reachable
+make test-integration   # only the integration-marked tests — requires the
+                        # live, seeded stack from step 1
+```
+
+`pytest --cov=safety_core --cov-report=term-missing` reports coverage on
+the deterministic core specifically (target: ≥90%; currently ~99%).
+
+### 3. Run a request through the agent
+
+There's no CLI yet (see "Not yet built" below) — call the loop directly:
+
+```python
+from k8s_agent.agent import run_agent_loop
+from k8s_agent.model_client import ModelClient
+from k8s_agent.cluster import ClusterClient
+from k8s_agent.audit_sink import StdoutAuditSink
+from safety_core.guardrails import Guardrails
+from safety_core.audit import Auditor
+
+result = run_agent_loop(
+    "The healthy-web deployment in bounded-agent-demo needs to scale to 4 replicas.",
+    model_client=ModelClient(),
+    cluster_client=ClusterClient(),
+    guardrails=Guardrails(),
+    auditor=Auditor(StdoutAuditSink()),
+)
+print(result.outcome, result.decision)
+```
+
+This runs the full screen → propose → validate → classify → act → audit
+pipeline against your live stack: `StdoutAuditSink` prints one JSON line
+per audit step (trace id, action, decision, detail), and `result.decision`
+carries the gate's tier, its reason, and (when relevant) the rollback plan
+and success criterion.
+
+### Not yet built
+
+- **Model eval suite** — quality/correctness measurement for the model's
+  proposals isn't implemented yet. `tests/test_model_client.py` and
+  `tests/test_agent_loop.py` cover the *plumbing* (parsing, validation,
+  routing) against stubbed responses, not the real model's judgment.
+- **Automatic rollback invocation** — `RollbackPlan`s are generated and
+  attached to every `Decision`, but nothing yet observes post-execution
+  state and invokes one automatically on regression.
+  `safety_core.success.check_regression` and `RollbackRegistry` exist and
+  are unit-tested, just not wired into the live loop.
+- **Kubescape scan → remediate → rescan loop** — no Kubescape integration
+  exists in `k8s_agent/` yet.
+- **CLI / interactive entry point** — `run_agent_loop` is currently only
+  callable from Python directly, as above; `make demo` is still a stub.
 
 ## Bounded AI Agent Design Overview
 
