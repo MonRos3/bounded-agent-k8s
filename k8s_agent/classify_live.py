@@ -15,21 +15,35 @@ from k8s_agent.state_builder import build_facts
 from safety_core.gate import Gate
 from safety_core.types import Action, Decision, State
 
+# Tools whose target identifier is a pod name, not a Deployment name — the
+# Gate always classifies Deployment-shaped facts, so these need resolving
+# to their owning Deployment before lookup. Everything else's `name` is
+# already a Deployment name.
+_POD_SCOPED_TOOLS = {"get_pod_logs", "delete_pod"}
+
 
 def classify_live(action: Action, name: str, namespace: str, cluster_client: ClusterClient) -> Decision:
-    """Classify `action` (targeting the Deployment `name` in `namespace`)
-    against live cluster state.
+    """Classify `action` against live cluster state. `name` identifies the
+    target: a pod name for delete_pod/get_pod_logs (resolved to its owning
+    Deployment below), already a Deployment name for everything else.
 
     Target found: fetch its DeploymentState and translate it via
     build_facts. Target not found: ClusterClient raises
-    DeploymentNotFoundError on a real 404 — caught here, and facts are
-    built directly (never via build_facts, since there's no DeploymentState
-    to translate) carrying target_exists: False. Either way, the resulting
-    State is handed to a real Gate; this function never decides a tier
-    itself.
+    DeploymentNotFoundError — either resolving a pod to its owning
+    Deployment, or looking up the Deployment itself, lands in the same
+    except block here (there's deliberately only one not-found handler: a
+    pod with no owning Deployment and a missing Deployment both mean
+    target_exists: False to the gate, so they're handled identically, not
+    as two separate lookups). Facts are then built directly (never via
+    build_facts, since there's no DeploymentState to translate) carrying
+    target_exists: False. Either way, the resulting State is handed to a
+    real Gate; this function never decides a tier itself.
     """
     try:
-        deployment_state = cluster_client.get_deployment_state(name, namespace)
+        deployment_name = (
+            cluster_client.resolve_pod_owner(name, namespace) if action.tool in _POD_SCOPED_TOOLS else name
+        )
+        deployment_state = cluster_client.get_deployment_state(deployment_name, namespace)
         facts = build_facts(deployment_state, DEMO_POLICY.protected_zones)
     except DeploymentNotFoundError:
         facts = _facts_for_missing_target()

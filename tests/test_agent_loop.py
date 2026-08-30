@@ -28,16 +28,29 @@ class FakeClusterClient:
     """Returns canned DeploymentStates; raises DeploymentNotFoundError for
     anything not registered. Execute methods are trivial success stubs —
     the loop tests care about tier/routing, not real cluster mutation.
+    `pod_owners` mirrors ClusterClient.resolve_pod_owner: (pod_name,
+    namespace) -> owning deployment name, unregistered -> not found.
     """
 
-    def __init__(self, states: dict[tuple[str, str], DeploymentState]) -> None:
+    def __init__(
+        self,
+        states: dict[tuple[str, str], DeploymentState],
+        pod_owners: dict[tuple[str, str], str] | None = None,
+    ) -> None:
         self._states = states
+        self._pod_owners = pod_owners or {}
 
     def get_deployment_state(self, name: str, namespace: str) -> DeploymentState:
         key = (name, namespace)
         if key not in self._states:
             raise DeploymentNotFoundError(f"{name} not found in {namespace}")
         return self._states[key]
+
+    def resolve_pod_owner(self, pod_name: str, namespace: str) -> str:
+        key = (pod_name, namespace)
+        if key not in self._pod_owners:
+            raise DeploymentNotFoundError(f"{pod_name} has no owning deployment in {namespace}")
+        return self._pod_owners[key]
 
     def scale_deployment(self, name, namespace, replicas):
         return ExecutionResult(success=True, detail={"replicas": replicas})
@@ -157,3 +170,43 @@ def test_audit_trail_has_proposed_and_classified_under_one_trace_id():
 
     classified_event = next(e for e in sink.events if e.step == "classified")
     assert classified_event.action == result.action
+
+
+def test_pod_scoped_action_classifies_against_resolved_deployment_not_pod_name():
+    """Regression test for the pod-vs-deployment-name bug: the pod name
+    itself is never registered in `states`, only the deployment it resolves
+    to. This only passes if classify_live actually calls resolve_pod_owner
+    and uses its result — the raw pod name alone would never match.
+    """
+    cluster_client = FakeClusterClient(
+        states={("healthy-web", "bounded-agent-demo"): _HEALTHY_STATE},
+        pod_owners={("healthy-web-abc123", "bounded-agent-demo"): "healthy-web"},
+    )
+    proposed = ProposedAction(
+        tool="delete_pod",
+        args={"namespace": "bounded-agent-demo", "pod": "healthy-web-abc123"},
+        advisory_note="Recycling a stuck pod.",
+        raw_response="...",
+    )
+    kwargs = _loop(model_client=_mock_model(proposed), cluster_client=cluster_client)
+
+    result = run_agent_loop("recycle the stuck pod", **kwargs)
+
+    assert result.outcome == AgentOutcome.DECIDED
+    assert "target not found" not in result.decision.reason
+
+
+def test_pod_scoped_action_with_unresolvable_pod_blocks_for_target_not_found():
+    cluster_client = FakeClusterClient(states={}, pod_owners={})
+    proposed = ProposedAction(
+        tool="delete_pod",
+        args={"namespace": "bounded-agent-demo", "pod": "ghost-pod"},
+        advisory_note="",
+        raw_response="...",
+    )
+    kwargs = _loop(model_client=_mock_model(proposed), cluster_client=cluster_client)
+
+    result = run_agent_loop("delete ghost-pod", **kwargs)
+
+    assert result.decision.tier == Tier.BLOCK
+    assert "target not found" in result.decision.reason

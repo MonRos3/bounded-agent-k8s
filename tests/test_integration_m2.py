@@ -9,7 +9,7 @@ import pytest
 from kubernetes import client, config
 
 from k8s_agent.classify_live import classify_live
-from k8s_agent.cluster import ClusterClient
+from k8s_agent.cluster import ClusterClient, DeploymentNotFoundError
 from safety_core.types import Action, Tier
 
 pytestmark = pytest.mark.integration
@@ -37,18 +37,30 @@ def _delete_pod_action(pod: str, namespace: str) -> Action:
     return Action(tool="delete_pod", args={"namespace": namespace, "pod": pod}, rationale="Recycling a stuck pod.")
 
 
-def test_safe_delete_pod_on_healthy_deployment_yields_approve(cluster: ClusterClient):
-    action = _delete_pod_action("healthy-web-some-pod", _DEMO_NAMESPACE)
+def _first_pod_name(namespace: str, app_label: str) -> str:
+    """A real, currently-live pod name for the given app label — needed
+    now that classify_live resolves delete_pod's target via a genuine
+    ownerReferences lookup rather than accepting a deployment name
+    directly.
+    """
+    pods = client.CoreV1Api().list_namespaced_pod(namespace, label_selector=f"app={app_label}")
+    return pods.items[0].metadata.name
 
-    decision = classify_live(action, "healthy-web", _DEMO_NAMESPACE, cluster)
+
+def test_safe_delete_pod_on_healthy_deployment_yields_approve(cluster: ClusterClient):
+    pod = _first_pod_name(_DEMO_NAMESPACE, "healthy-web")
+    action = _delete_pod_action(pod, _DEMO_NAMESPACE)
+
+    decision = classify_live(action, pod, _DEMO_NAMESPACE, cluster)
 
     assert decision.tier == Tier.APPROVE
 
 
 def test_same_action_on_degraded_deployment_blocked_by_pdb_breach(cluster: ClusterClient):
-    action = _delete_pod_action("degraded-checkout-some-pod", _DEMO_NAMESPACE)
+    pod = _first_pod_name(_DEMO_NAMESPACE, "degraded-checkout")
+    action = _delete_pod_action(pod, _DEMO_NAMESPACE)
 
-    decision = classify_live(action, "degraded-checkout", _DEMO_NAMESPACE, cluster)
+    decision = classify_live(action, pod, _DEMO_NAMESPACE, cluster)
 
     assert decision.tier == Tier.BLOCK
     assert "PDB" in decision.reason
@@ -58,18 +70,20 @@ def test_delete_pod_on_solo_replica_deployment_blocked_by_pdb_breach(cluster: Cl
     """Scenario A: the visceral "delete the only pod" case — healthy_replicas: 1,
     pdb_min_available: 1 read from the real cluster, headroom 0, gate BLOCKs.
     """
-    action = _delete_pod_action("solo-replica-web-some-pod", _DEMO_NAMESPACE)
+    pod = _first_pod_name(_DEMO_NAMESPACE, "solo-replica-web")
+    action = _delete_pod_action(pod, _DEMO_NAMESPACE)
 
-    decision = classify_live(action, "solo-replica-web", _DEMO_NAMESPACE, cluster)
+    decision = classify_live(action, pod, _DEMO_NAMESPACE, cluster)
 
     assert decision.tier == Tier.BLOCK
     assert "PDB" in decision.reason
 
 
 def test_action_in_protected_namespace_blocked(cluster: ClusterClient):
-    action = _delete_pod_action("payments-core-some-pod", _PROTECTED_NAMESPACE)
+    pod = _first_pod_name(_PROTECTED_NAMESPACE, "payments-core")
+    action = _delete_pod_action(pod, _PROTECTED_NAMESPACE)
 
-    decision = classify_live(action, "payments-core", _PROTECTED_NAMESPACE, cluster)
+    decision = classify_live(action, pod, _PROTECTED_NAMESPACE, cluster)
 
     assert decision.tier == Tier.BLOCK
     assert "protected" in decision.reason
@@ -94,11 +108,36 @@ def test_nonexistent_target_blocked_via_gate_validity_branch(cluster: ClusterCli
     M1.4 validity branch — not a shortcut in classify_live, which never
     constructs a Decision or reason string itself. A Gate-shaped reason
     (this exact substring, defined in safety_core/gate.py) is structural
-    proof the BLOCK came from the Gate, not from classify_live.
+    proof the BLOCK came from the Gate, not from classify_live. Uses a
+    deployment-scoped tool — `name` passes straight through unresolved for
+    these, so this is purely a missing-Deployment 404, distinct from the
+    pod-resolution case below.
     """
-    action = _delete_pod_action("ghost-pod", _DEMO_NAMESPACE)
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": _DEMO_NAMESPACE, "deployment": "does-not-exist-web", "target_replicas": 3},
+        rationale="Scaling a deployment that isn't there.",
+    )
 
     decision = classify_live(action, "does-not-exist-web", _DEMO_NAMESPACE, cluster)
+
+    assert decision.tier == Tier.BLOCK
+    assert "target not found" in decision.reason
+
+
+def test_delete_pod_on_nonexistent_pod_blocks_for_target_not_found(cluster: ClusterClient):
+    """The genuine not-found case for a pod-scoped tool — distinct from the
+    resolution-mismatch bug this task fixes. resolve_pod_owner itself
+    raises DeploymentNotFoundError for a pod that doesn't exist, and that
+    propagates into classify_live's single not-found handler (same one the
+    deployment-404 case above lands in) rather than a second lookup.
+    """
+    ghost_pod = "ghost-pod-does-not-exist"
+    with pytest.raises(DeploymentNotFoundError):
+        cluster.resolve_pod_owner(ghost_pod, _DEMO_NAMESPACE)
+
+    action = _delete_pod_action(ghost_pod, _DEMO_NAMESPACE)
+    decision = classify_live(action, ghost_pod, _DEMO_NAMESPACE, cluster)
 
     assert decision.tier == Tier.BLOCK
     assert "target not found" in decision.reason
