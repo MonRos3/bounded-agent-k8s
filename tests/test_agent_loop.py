@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from k8s_agent.agent import AgentOutcome, run_agent_loop
+from k8s_agent.agent import AgentOutcome, execute_approved_action, run_agent_loop
 from k8s_agent.cluster import DeploymentNotFoundError, ExecutionResult
 from k8s_agent.cluster_types import DeploymentState
 from k8s_agent.proposal_types import ProposedAction
 from safety_core.audit import AuditEvent, AuditSink, Auditor
 from safety_core.guardrails import Guardrails
-from safety_core.types import Tier
+from safety_core.types import Action, Tier
 
 
 class FakeAuditSink(AuditSink):
@@ -210,3 +210,122 @@ def test_pod_scoped_action_with_unresolvable_pod_blocks_for_target_not_found():
 
     assert result.decision.tier == Tier.BLOCK
     assert "target not found" in result.decision.reason
+
+
+def test_approve_tier_returns_action_and_decision_without_executing():
+    """Regression test for the classify/execute decoupling: APPROVE-tier
+    must return the validated Action + Decision for a future CLI to act on
+    after human sign-off, without mutating the cluster itself.
+    """
+    cluster_client = MagicMock(wraps=FakeClusterClient({("healthy-web", "bounded-agent-demo"): _HEALTHY_STATE}))
+    proposed = ProposedAction(
+        tool="update_resource_limits",
+        args={
+            "namespace": "bounded-agent-demo",
+            "deployment": "healthy-web",
+            "container": "web",
+            "memory_limit": "512Mi",
+        },
+        advisory_note="Bumping memory to avoid OOMKills.",
+        raw_response="...",
+    )
+    kwargs = _loop(model_client=_mock_model(proposed), cluster_client=cluster_client)
+
+    result = run_agent_loop("bump the memory limit on healthy-web", **kwargs)
+
+    assert result.outcome == AgentOutcome.DECIDED
+    assert result.decision.tier == Tier.APPROVE
+    assert result.action is not None
+    assert result.action.tool == "update_resource_limits"
+    cluster_client.update_resource_limits.assert_not_called()
+
+
+def test_execute_approved_action_dispatches_scale_to_matching_executor():
+    cluster_client = MagicMock(wraps=FakeClusterClient({}))
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": "bounded-agent-demo", "deployment": "healthy-web", "target_replicas": 5},
+        rationale="",
+    )
+
+    result = execute_approved_action(action, cluster_client)
+
+    cluster_client.scale_deployment.assert_called_once_with("healthy-web", "bounded-agent-demo", 5)
+    assert result.success is True
+
+
+def test_execute_approved_action_dispatches_delete_pod_to_matching_executor():
+    cluster_client = MagicMock(wraps=FakeClusterClient({}))
+    action = Action(
+        tool="delete_pod",
+        args={"namespace": "bounded-agent-demo", "pod": "healthy-web-abc123"},
+        rationale="",
+    )
+
+    result = execute_approved_action(action, cluster_client)
+
+    cluster_client.delete_pod.assert_called_once_with("healthy-web-abc123", "bounded-agent-demo")
+    assert result.success is True
+
+
+def test_execute_approved_action_dispatches_update_resource_limits_to_matching_executor():
+    cluster_client = MagicMock(wraps=FakeClusterClient({}))
+    action = Action(
+        tool="update_resource_limits",
+        args={
+            "namespace": "bounded-agent-demo",
+            "deployment": "healthy-web",
+            "container": "web",
+            "memory_limit": "512Mi",
+        },
+        rationale="",
+    )
+
+    result = execute_approved_action(action, cluster_client)
+
+    cluster_client.update_resource_limits.assert_called_once_with(
+        "healthy-web", "bounded-agent-demo", "web", memory="512Mi"
+    )
+    assert result.success is True
+
+
+def test_execute_approved_action_dispatches_restart_to_matching_executor():
+    cluster_client = MagicMock(wraps=FakeClusterClient({}))
+    action = Action(
+        tool="restart_deployment",
+        args={"namespace": "bounded-agent-demo", "deployment": "healthy-web"},
+        rationale="",
+    )
+
+    result = execute_approved_action(action, cluster_client)
+
+    cluster_client.restart_deployment.assert_called_once_with("healthy-web", "bounded-agent-demo")
+    assert result.success is True
+
+
+def test_execute_approved_action_dispatches_delete_pvc_to_matching_executor():
+    cluster_client = MagicMock(wraps=FakeClusterClient({}))
+    action = Action(
+        tool="delete_persistent_volume_claim",
+        args={"namespace": "bounded-agent-demo", "pvc": "data-pvc"},
+        rationale="",
+    )
+
+    result = execute_approved_action(action, cluster_client)
+
+    cluster_client.delete_persistent_volume_claim.assert_called_once_with("data-pvc", "bounded-agent-demo")
+    assert result.success is True
+
+
+def test_execute_approved_action_is_a_no_op_for_read_only_tools():
+    cluster_client = MagicMock(wraps=FakeClusterClient({}))
+    action = Action(
+        tool="get_pod_logs",
+        args={"namespace": "bounded-agent-demo", "pod": "healthy-web-abc123"},
+        rationale="",
+    )
+
+    result = execute_approved_action(action, cluster_client)
+
+    assert result.success is True
+    assert cluster_client.mock_calls == []

@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Any
 
 from k8s_agent.classify_live import classify_live
-from k8s_agent.cluster import ClusterClient
+from k8s_agent.cluster import ClusterClient, ExecutionResult
 from k8s_agent.model_client import ModelClient
 from k8s_agent.policy_config import DEMO_POLICY
 from k8s_agent.prompt import build_tool_schema
@@ -132,7 +132,8 @@ def run_agent_loop(
     namespace = action.args["namespace"]
     decision = classify_live(action, name, namespace, cluster_client)
 
-    surfaced_message = guardrails.redact_output(_act(decision, action, name, namespace, cluster_client))
+    execution = execute_approved_action(action, cluster_client) if decision.tier == Tier.AUTO else None
+    surfaced_message = guardrails.redact_output(_surfaced_message(decision, action, execution))
 
     auditor.record("classified", trace_id=trace_id, action=action, decision=decision, detail={})
 
@@ -160,23 +161,38 @@ def handle_code_push(
     )
 
 
-def _act(decision: Decision, action: Action, name: str, namespace: str, cluster_client: ClusterClient) -> str:
-    """Act on the gate's tier: AUTO executes for real (via the matching
-    ClusterClient method, or a no-op note for read-only tools with nothing
-    to execute); APPROVE/BLOCK never mutate anything, they only surface a
-    message for a human. Not redacted here — the caller applies
-    guardrails.redact_output to whatever this returns.
+def execute_approved_action(action: Action, cluster_client: ClusterClient) -> ExecutionResult:
+    """The sole execution path for an approved Action. AUTO-tier calls this
+    from inside run_agent_loop; a human-approved APPROVE-tier action calls
+    this from the CLI, after the human signs off — one dispatch table, no
+    duplication between the two callers. get_pod_logs (and any other
+    read-only tool absent from _EXECUTORS) is a no-op: nothing to mutate.
     """
-    if decision.tier == Tier.AUTO:
-        executor = _EXECUTORS.get(action.tool)
-        if executor is None:
-            return f"Read-only action '{action.tool}' — no cluster mutation needed."
-        result = executor(cluster_client, name, namespace, action.args)
-        status = "succeeded" if result.success else "failed"
-        return f"Executed '{action.tool}' ({status}): {result.detail}"
+    executor = _EXECUTORS.get(action.tool)
+    if executor is None:
+        return ExecutionResult(
+            success=True, detail={"note": f"'{action.tool}' is read-only — no cluster mutation performed."}
+        )
+    name = action.args[_NAME_ARG_KEY[action.tool]]
+    namespace = action.args["namespace"]
+    return executor(cluster_client, name, namespace, action.args)
+
+
+def _surfaced_message(decision: Decision, action: Action, execution: ExecutionResult | None) -> str:
+    """Build the human-facing message for a Decision. Pure formatting —
+    never touches cluster_client itself; run_agent_loop decides whether to
+    execute (via execute_approved_action) before calling this. Not
+    redacted here — the caller applies guardrails.redact_output.
+    """
+    if decision.tier == Tier.AUTO and execution is not None:
+        status = "succeeded" if execution.success else "failed"
+        return f"Executed '{action.tool}' ({status}): {execution.detail}"
 
     if decision.tier == Tier.APPROVE:
-        return f"Approval required for '{action.tool}' (args: {action.args}). Reason: {decision.reason}. No action taken — awaiting human sign-off."
+        return (
+            f"Approval required for '{action.tool}' (args: {action.args}). "
+            f"Reason: {decision.reason}. No action taken — awaiting human sign-off."
+        )
 
     return f"Blocked and escalated: '{action.tool}'. Reason: {decision.reason}."
 
