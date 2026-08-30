@@ -24,9 +24,11 @@ _SYSTEM_PROMPT = (
 )
 
 # Policy.Rule only carries tier/reversibility, not argument shapes — this
-# fills that gap for prompting purposes. A tool with no entry here still
-# appears in the schema (with an empty hint dict) rather than vanishing.
-_TOOL_ARG_HINTS: dict[str, dict[str, str]] = {
+# fills that gap. Single source of truth: used both for prompting (below)
+# and for validating a proposal's args (k8s_agent/validation.py). A tool
+# with no entry here still appears in the schema (with an empty hint dict)
+# rather than vanishing.
+TOOL_ARG_HINTS: dict[str, dict[str, str]] = {
     "get_pod_logs": {"namespace": "string", "pod": "string"},
     "scale_deployment": {"namespace": "string", "deployment": "string", "target_replicas": "integer"},
     "restart_deployment": {"namespace": "string", "deployment": "string"},
@@ -45,7 +47,7 @@ def build_tool_schema(policy: Policy) -> dict[str, dict[str, str]]:
     """The set of tools offered to the model, derived from `policy`'s
     allow-list — if the policy changes, the offered tools change with it.
     """
-    return {rule.tool: _TOOL_ARG_HINTS.get(rule.tool, {}) for rule in policy.rules}
+    return {rule.tool: TOOL_ARG_HINTS.get(rule.tool, {}) for rule in policy.rules}
 
 
 def build_prompt(operator_request: str, tool_schema: dict[str, dict[str, str]]) -> str:
