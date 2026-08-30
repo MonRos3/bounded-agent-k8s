@@ -29,6 +29,7 @@ from rich.prompt import Prompt
 from k8s_agent.agent import AgentOutcome, AgentResult, execute_approved_action, run_agent_loop
 from k8s_agent.audit_sink import FileAuditSink
 from k8s_agent.cluster import ClusterClient
+from k8s_agent.cluster_types import DryRunDiff
 from k8s_agent.model_client import ModelClient
 from safety_core.audit import Auditor
 from safety_core.guardrails import Guardrails
@@ -82,13 +83,37 @@ def render_decision_path(console: Console, operator_request: str, result: AgentR
     console.print(f"[bold]action[/bold]      [{style}]{escape(result.surfaced_message)}[/{style}]")
 
 
-def render_approval_prompt(console: Console, operator_request: str, result: AgentResult, guardrails: Guardrails) -> None:
+def _render_dry_run_diff(diff: DryRunDiff, guardrails: Guardrails) -> str:
+    """Render a real dry-run result for the approval prompt. Labeled
+    honestly per `diff.kind`: "field_delta"/"removal" mean a real
+    server-side dry run happened; "simulated_removal" (the PVC-delete
+    path) never touched the real dry-run API and must never claim to.
+    """
+    if diff.kind == "field_delta":
+        parts = [
+            f"{field}: {escape(guardrails.redact_output(str(old)))} -> {escape(guardrails.redact_output(str(new)))}"
+            for field, (old, new) in diff.changes.items()
+        ]
+        return f"[bold]predicted effect (server-side dry-run)[/bold] {', '.join(parts)}"
+    if diff.kind == "removal":
+        return f"[bold]predicted effect (server-side dry-run)[/bold] {escape(guardrails.redact_output(diff.description or ''))}"
+    return (
+        "[bold]predicted effect (simulated — no real dry-run performed)[/bold] "
+        f"{escape(guardrails.redact_output(diff.description or ''))}"
+    )
+
+
+def render_approval_prompt(
+    console: Console, operator_request: str, result: AgentResult, guardrails: Guardrails, cluster_client: ClusterClient
+) -> None:
     """Everything a human needs before deciding, shown once more as one
     contained unit right before the prompt: request, proposed action +
-    advisory note, tier + reason, scope, the requested change, and the
-    rollback plan. No dry-run diff generator exists in this codebase yet
-    (state_builder.py never populates one) — "requested change" is
-    labeled as such rather than claiming to be a diff it isn't.
+    advisory note, tier + reason, scope, the predicted effect, and the
+    rollback plan. The predicted effect is a real Kubernetes server-side
+    dry run when one is available; falls back to echoing the requested
+    change (the M-HITL.2 placeholder) for read-only tools or when the
+    dry run itself fails — the prompt is always populated, richer when a
+    real preview exists, honest when it doesn't.
     """
     action = result.action
     decision = result.decision
@@ -104,10 +129,16 @@ def render_approval_prompt(console: Console, operator_request: str, result: Agen
             lines.append(f"[bold]advisory[/bold] {escape(note)}")
     lines.append(f"[bold]tier[/bold]     [yellow]{decision.tier.value.upper()}[/yellow] — {escape(decision.reason)}")
     lines.append(f"[bold]scope[/bold]    {escape(decision.scope)}")
-    lines.append(
-        "[bold]requested change[/bold] (no live dry-run diff generator exists yet — "
-        f"showing the proposed change itself): {_format_args(action.args, guardrails)}"
-    )
+
+    diff = cluster_client.dry_run_diff(action)
+    if diff is not None:
+        lines.append(_render_dry_run_diff(diff, guardrails))
+    else:
+        lines.append(
+            "[bold]requested change[/bold] (no dry-run preview available — "
+            f"showing the proposed change itself): {_format_args(action.args, guardrails)}"
+        )
+
     if decision.rollback is not None:
         rollback = decision.rollback
         lines.append(
@@ -144,7 +175,7 @@ def handle_approve_tier(
     showing the rejection. Either way, control returns to the REPL loop
     for the next request.
     """
-    render_approval_prompt(console, operator_request, result, guardrails)
+    render_approval_prompt(console, operator_request, result, guardrails, cluster_client)
 
     if prompt_approval(ask=ask):
         assert result.action is not None, "APPROVE tier always carries an Action"
