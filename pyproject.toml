@@ -3,4 +3,5 @@ pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "integration: requires a live/seeded cluster; skips gracefully when none is reachable",
+    "eval: runs the real LLM against tests/eval_corpus.json; slow, requires the full live stack, never auto-collected (see tests/eval_llm.py)",
 ]
