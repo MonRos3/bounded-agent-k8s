@@ -4,8 +4,10 @@ injected sink. Domain code never writes audit records directly.
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from safety_core.types import Action, Decision
@@ -56,10 +58,24 @@ class Auditor:
 
     def new_trace(self) -> str:
         """Start a new trace and return its trace_id."""
-        raise NotImplementedError
+        return str(uuid.uuid4())
 
     def record(self, step: str, **kwargs: Any) -> None:
         """Build an AuditEvent for `step` from `kwargs` and emit it via the
         injected sink.
+
+        `kwargs` must supply `trace_id`, `action`, and `decision`; `detail`
+        is optional (defaults to empty). Placeholder `action`/`decision`
+        values for steps that don't yet have a real one (e.g. a proposal
+        not yet classified) are the caller's responsibility — this method
+        only assembles what it's given, it doesn't invent domain meaning.
         """
-        raise NotImplementedError
+        event = AuditEvent(
+            trace_id=kwargs["trace_id"],
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            step=step,
+            action=kwargs["action"],
+            decision=kwargs["decision"],
+            detail=kwargs.get("detail", {}),
+        )
+        self._sink.emit(event)

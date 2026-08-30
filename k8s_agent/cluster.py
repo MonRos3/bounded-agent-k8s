@@ -198,3 +198,45 @@ class ClusterClient:
             success=True,
             detail={"simulated": True, "pvc": name, "note": "PVC deletion is simulated — no real delete was performed."},
         )
+
+    def resolve_pod_owner(self, pod_name: str, namespace: str) -> str:
+        """Walk ownerReferences: pod -> ReplicaSet -> Deployment, returning
+        the Deployment's name.
+
+        Raises DeploymentNotFoundError for every genuine not-found case —
+        the pod itself is gone, it has no owning ReplicaSet (e.g. a bare
+        pod), the ReplicaSet is gone, or the ReplicaSet has no owning
+        Deployment. Never a catch-all: each of these is a real absence, not
+        a guess (a pod name is not "deployment-name + hash" reliably, so
+        this walks the actual ownerReferences chain rather than string
+        -matching the name).
+        """
+        try:
+            pod = self._core.read_namespaced_pod(pod_name, namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                raise DeploymentNotFoundError(f"Pod '{pod_name}' not found in namespace '{namespace}'") from exc
+            raise
+
+        rs_name = self._controller_owner_name(pod.metadata.owner_references, "ReplicaSet")
+        if rs_name is None:
+            raise DeploymentNotFoundError(f"Pod '{pod_name}' has no owning ReplicaSet in namespace '{namespace}'")
+
+        try:
+            replica_set = self._apps.read_namespaced_replica_set(rs_name, namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                raise DeploymentNotFoundError(f"ReplicaSet '{rs_name}' not found in namespace '{namespace}'") from exc
+            raise
+
+        deployment_name = self._controller_owner_name(replica_set.metadata.owner_references, "Deployment")
+        if deployment_name is None:
+            raise DeploymentNotFoundError(f"ReplicaSet '{rs_name}' has no owning Deployment in namespace '{namespace}'")
+        return deployment_name
+
+    @staticmethod
+    def _controller_owner_name(owner_references: list[Any] | None, kind: str) -> str | None:
+        for owner in owner_references or []:
+            if owner.kind == kind and owner.controller:
+                return owner.name
+        return None
