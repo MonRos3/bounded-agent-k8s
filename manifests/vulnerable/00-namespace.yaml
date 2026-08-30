@@ -1,0 +1,11 @@
+# Dedicated namespace for deliberately-insecure demo fixtures (M6.1's
+# Kubescape compliance demo). Entirely separate from bounded-agent-demo/
+# bounded-agent-demo-protected — zero interaction with the agent's own
+# demo deployments, PDBs, or any Gate-classification scenario. Never
+# applied by scripts/seed.sh; only scripts/seed_insecure.sh touches this
+# namespace. These are intentionally broken manifests for a security
+# scanner to find — never a template for real workloads.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bounded-agent-demo-insecure

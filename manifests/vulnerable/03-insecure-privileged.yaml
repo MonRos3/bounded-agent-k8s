@@ -1,0 +1,33 @@
+# INTENTIONALLY INSECURE — demo fixture for M6.1's Kubescape compliance
+# scan. `privileged: true` grants the container near-full access to the
+# host — trips Kubescape's "Privileged container" control (NSA
+# framework, C-0057), one of the most severe checks it runs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-privileged
+  namespace: bounded-agent-demo-insecure
+  labels:
+    app: insecure-privileged
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: insecure-privileged
+  template:
+    metadata:
+      labels:
+        app: insecure-privileged
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi

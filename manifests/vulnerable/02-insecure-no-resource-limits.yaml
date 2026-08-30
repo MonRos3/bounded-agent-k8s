@@ -1,0 +1,25 @@
+# INTENTIONALLY INSECURE — demo fixture for M6.1's Kubescape compliance
+# scan. No `resources` block at all (no requests, no limits) — trips
+# Kubescape's "Ensure CPU limits are set" / "Ensure memory limits are
+# set" controls (NSA framework, C-0270/C-0271): an unbounded container
+# can starve every other workload on its node.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-no-resource-limits
+  namespace: bounded-agent-demo-insecure
+  labels:
+    app: insecure-no-resource-limits
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: insecure-no-resource-limits
+  template:
+    metadata:
+      labels:
+        app: insecure-no-resource-limits
+    spec:
+      containers:
+        - name: web
+          image: nginx:alpine
