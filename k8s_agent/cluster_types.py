@@ -8,6 +8,7 @@ one-directional, k8s_agent -> facts dict -> safety_core.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -27,3 +28,22 @@ class DeploymentState:
     pdb_min_available: int | None
     revisions: list[int]
     mid_batch: bool
+
+
+@dataclass(frozen=True)
+class DryRunDiff:
+    """A read-only preview of what a proposed action would change, from a
+    real Kubernetes server-side dry run (or, for the one simulated
+    action, a descriptor consistent with that simulation).
+
+    `kind` says what shape `changes` has: "field_delta" (changes maps
+    field name -> (old, new), from a real dry-run patch/update),
+    "removal" (a delete that a real dry-run confirmed would be accepted;
+    changes is empty, description says what would be removed), or
+    "simulated_removal" (delete_persistent_volume_claim's simulated path
+    — no real dry run was performed at all; description says so).
+    """
+
+    kind: str
+    changes: dict[str, tuple[Any, Any]]
+    description: str | None

@@ -1,9 +1,13 @@
 """Thin I/O layer over a real Kubernetes cluster, via the kubernetes Python
 client (never subprocess/shell strings — see OWASP: no OS commands built
-from data). Does I/O and populates DeploymentState/ExecutionResult objects
-only. No classification logic (that's the Gate, safety_core/) and no
-translation logic beyond populating DeploymentState (that's
-k8s_agent/state_builder.py's job) — this module never imports safety_core/.
+from data). Does I/O and populates DeploymentState/ExecutionResult/
+DryRunDiff objects only. No classification logic (that's the Gate,
+safety_core/) and no translation logic beyond populating DeploymentState
+(that's k8s_agent/state_builder.py's job) — this module still never
+imports Gate, Policy, Decision, or State; the one exception is Action
+(dry_run_diff's parameter), safety_core's own designated domain-agnostic
+value type ("Domain layers populate them" — safety_core/types.py), no
+different in kind from k8s_agent/agent.py already importing it.
 """
 
 from __future__ import annotations
@@ -15,7 +19,8 @@ from typing import Any
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
-from k8s_agent.cluster_types import DeploymentState
+from k8s_agent.cluster_types import DeploymentState, DryRunDiff
+from safety_core.types import Action
 
 _REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
 
@@ -198,6 +203,102 @@ class ClusterClient:
             success=True,
             detail={"simulated": True, "pvc": name, "note": "PVC deletion is simulated — no real delete was performed."},
         )
+
+    def dry_run_diff(self, action: Action) -> DryRunDiff | None:
+        """A read-only preview of what `action` would change, via a real
+        server-side dry run (dry_run="All") — runs the change through the
+        full admission pipeline and returns the resulting object without
+        persisting anything. Operator-preview only: never wired into
+        classification, the Gate already made the safety decision before
+        this is ever called. Fails soft on purpose (any exception, not
+        just ApiException) — a broken preview must never crash the CLI or
+        block a decision; it's informational, not a safety gate.
+        """
+        try:
+            if action.tool == "scale_deployment":
+                return self._dry_run_scale(
+                    action.args["deployment"], action.args["namespace"], action.args["target_replicas"]
+                )
+            if action.tool == "restart_deployment":
+                return self._dry_run_restart(action.args["deployment"], action.args["namespace"])
+            if action.tool == "update_resource_limits":
+                return self._dry_run_update_resource_limits(
+                    action.args["deployment"],
+                    action.args["namespace"],
+                    action.args["container"],
+                    memory=action.args.get("memory_limit"),
+                )
+            if action.tool == "delete_pod":
+                return self._dry_run_delete_pod(action.args["pod"], action.args["namespace"])
+            if action.tool == "delete_persistent_volume_claim":
+                return DryRunDiff(
+                    kind="simulated_removal",
+                    changes={},
+                    description=(
+                        f"PVC '{action.args['pvc']}' deletion is simulated in this demo — "
+                        "no real dry run is performed."
+                    ),
+                )
+            return None  # get_pod_logs (read-only) and anything unrecognized
+        except Exception:
+            return None
+
+    def _dry_run_scale(self, name: str, namespace: str, target_replicas: int) -> DryRunDiff:
+        current = self._apps.read_namespaced_deployment(name, namespace)
+        result = self._apps.patch_namespaced_deployment_scale(
+            name, namespace, {"spec": {"replicas": target_replicas}}, dry_run="All"
+        )
+        return DryRunDiff(
+            kind="field_delta", changes={"replicas": (current.spec.replicas, result.spec.replicas)}, description=None
+        )
+
+    def _dry_run_restart(self, name: str, namespace: str) -> DryRunDiff:
+        current = self._apps.read_namespaced_deployment(name, namespace)
+        old_annotation = self._restarted_at(current)
+        patch = {
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "annotations": {"kubectl.kubernetes.io/restartedAt": datetime.now(timezone.utc).isoformat()}
+                    }
+                }
+            }
+        }
+        result = self._apps.patch_namespaced_deployment(name, namespace, patch, dry_run="All")
+        new_annotation = self._restarted_at(result)
+        return DryRunDiff(kind="field_delta", changes={"restartedAt": (old_annotation, new_annotation)}, description=None)
+
+    def _dry_run_update_resource_limits(
+        self, name: str, namespace: str, container: str, *, cpu: str | None = None, memory: str | None = None
+    ) -> DryRunDiff:
+        current = self._apps.read_namespaced_deployment(name, namespace)
+        old_limits = self._container_limits(current, container)
+        limits: dict[str, str] = {}
+        if cpu is not None:
+            limits["cpu"] = cpu
+        if memory is not None:
+            limits["memory"] = memory
+        patch = {
+            "spec": {"template": {"spec": {"containers": [{"name": container, "resources": {"limits": limits}}]}}}
+        }
+        result = self._apps.patch_namespaced_deployment(name, namespace, patch, dry_run="All")
+        new_limits = self._container_limits(result, container)
+        return DryRunDiff(kind="field_delta", changes={"limits": (old_limits, new_limits)}, description=None)
+
+    def _dry_run_delete_pod(self, name: str, namespace: str) -> DryRunDiff:
+        self._core.delete_namespaced_pod(name, namespace, dry_run="All")
+        return DryRunDiff(kind="removal", changes={}, description=f"Pod '{name}' would be removed.")
+
+    @staticmethod
+    def _restarted_at(deployment: Any) -> str | None:
+        return (deployment.spec.template.metadata.annotations or {}).get("kubectl.kubernetes.io/restartedAt")
+
+    @staticmethod
+    def _container_limits(deployment: Any, container_name: str) -> dict[str, str]:
+        for container in deployment.spec.template.spec.containers:
+            if container.name == container_name:
+                return dict(container.resources.limits or {}) if container.resources else {}
+        return {}
 
     def resolve_pod_owner(self, pod_name: str, namespace: str) -> str:
         """Walk ownerReferences: pod -> ReplicaSet -> Deployment, returning

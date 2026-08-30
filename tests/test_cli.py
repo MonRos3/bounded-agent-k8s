@@ -12,15 +12,19 @@ import pytest
 from rich.console import Console
 
 from k8s_agent.agent import AgentOutcome, AgentResult
-from k8s_agent.cli import handle_approve_tier, prompt_approval
+from k8s_agent.cli import handle_approve_tier, prompt_approval, render_approval_prompt
 from k8s_agent.cluster import ExecutionResult
+from k8s_agent.cluster_types import DryRunDiff
 from safety_core.guardrails import Guardrails
 from safety_core.types import Action, Decision, Tier
 
 
 class FakeClusterClient:
     """Trivial execute-only stub — this test only cares whether the right
-    method is (or isn't) called, not classification.
+    method is (or isn't) called, not classification. dry_run_diff
+    defaults to None (no preview available) so tests that don't care
+    about the diff still exercise render_approval_prompt's fallback path
+    without needing to stub it themselves.
     """
 
     def scale_deployment(self, name, namespace, replicas):
@@ -28,6 +32,9 @@ class FakeClusterClient:
 
     def update_resource_limits(self, name, namespace, container, *, cpu=None, memory=None):
         return ExecutionResult(success=True, detail={"container": container})
+
+    def dry_run_diff(self, action):
+        return None
 
 
 def _approve_result() -> AgentResult:
@@ -96,3 +103,31 @@ def test_reject_response_does_not_execute():
     )
 
     cluster_client.update_resource_limits.assert_not_called()
+
+
+def test_render_approval_prompt_shows_real_diff_when_available():
+    cluster_client = MagicMock()
+    cluster_client.dry_run_diff.return_value = DryRunDiff(
+        kind="field_delta", changes={"replicas": (2, 3)}, description=None
+    )
+    console = Console(record=True, width=200)
+
+    render_approval_prompt(console, "scale healthy-web", _approve_result(), Guardrails(), cluster_client)
+
+    output = console.export_text()
+    assert "server-side dry-run" in output
+    assert "replicas" in output
+    assert "2 -> 3" in output
+    assert "requested change" not in output
+
+
+def test_render_approval_prompt_falls_back_when_no_diff():
+    cluster_client = MagicMock()
+    cluster_client.dry_run_diff.return_value = None
+    console = Console(record=True, width=200)
+
+    render_approval_prompt(console, "scale healthy-web", _approve_result(), Guardrails(), cluster_client)
+
+    output = console.export_text()
+    assert "requested change" in output
+    assert "server-side dry-run" not in output
