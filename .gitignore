@@ -50,6 +50,7 @@ ministack_data/
 logs/
 audit_logs/
 *.jsonl
+compliance_reports/
 
 # --- Editor / OS ---
 .DS_Store
