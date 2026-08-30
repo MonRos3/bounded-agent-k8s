@@ -31,7 +31,7 @@ class ScanError(Exception):
     """
 
 
-def scan_cluster(namespace: str | None = None, framework: str = "nsa") -> ScanResult:
+def scan_cluster(namespace: str | None = None, framework: str = "soc2") -> ScanResult:
     """Invoke Kubescape against the cluster (or one namespace), parse its
     JSON report, and return a structured ScanResult.
 

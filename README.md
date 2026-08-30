@@ -206,10 +206,58 @@ Run `make reset` afterward to restore clean seeded state (it deletes and
 re-applies the whole namespace, so `capacity-limited-web`'s CPU request
 goes back to its small seeded placeholder, not the demo-sized value).
 
+### Compliance verification (SOC 2 posture)
+
+This is a separate, **operator-owned** capability, not an agent tool —
+it lives in its own top-level `compliance/` package, imports neither
+`safety_core/` nor `k8s_agent/`, and has no LLM, gate, or agent
+involvement anywhere in it. The agent acts within the envelope this
+project's safety spine defines; this scans and reports on the envelope
+itself. That separation is visible in how each is invoked, not just in
+a comment: the agent's REPL is `make cli`; compliance verification is
+its own command, `make compliance`, run separately by a human.
+
+```sh
+make seed-insecure                              # a namespace with deliberate misconfigurations
+make compliance NAMESPACE=bounded-agent-demo-insecure   # guaranteed findings, for the demo
+make compliance                                  # the realistic default: scans the whole cluster
+```
+
+Kubescape scans against the **SOC 2** framework and the report shows the
+overall posture (controls passed/failed), failing findings by severity
+(control ID, name, affected resources, what failed), and — printed in
+the report itself, not buried in docs — an honest framing line: this is
+**evidence toward SOC 2 compliance for the Kubernetes infrastructure
+layer, not a SOC 2 certification**. SOC 2 is an organizational audit
+performed by a licensed auditor, covering controls well beyond
+Kubernetes configuration.
+
+One thing worth knowing if you also try the NSA framework against the
+same namespace (`make compliance NAMESPACE=bounded-agent-demo-insecure
+FRAMEWORK=nsa` — see `manifests/vulnerable/`'s own header comments):
+Kubescape's SOC 2 control
+set targets different concerns than NSA's pod-hardening checks entirely
+— secrets/key management, admin access restriction, network
+segmentation, encryption — not container `securityContext` or resource
+limits. The same insecure namespace genuinely fails different SOC 2
+controls (missing `NetworkPolicy`, mainly) than the ones its manifests
+were built to trip under NSA — confirmed empirically, not assumed; see
+`compliance/scan.py`'s and `tests/test_compliance_scan.py`'s comments.
+
+Every run writes a durable, timestamped evidence artifact to
+`compliance_reports/` (gitignored): a structured `.json` and a
+human-readable `.md`, both carrying the same honest framing line — the
+mature version of "is this compliant" is a file you can keep and hand to
+an auditor, not a terminal scroll.
+
 ### Not yet built
 
-- **Kubescape scan → remediate → rescan loop** — no Kubescape integration
-  exists in `k8s_agent/` yet.
+- **Kubescape remediate → rescan loop** — scanning and reporting exist
+  (`compliance/`); nothing yet acts on a finding automatically. Given
+  this is operator-owned verification by design, "remediation" here
+  would mean surfacing a suggested fix for a human to apply, never an
+  automatic mutation — there's no gate or agent involvement to route it
+  through.
 - **Web UI** — the operator console is terminal-only (`k8s_agent/cli.py`);
   a web UI is a possible post-M5 follow-up, not started.
 

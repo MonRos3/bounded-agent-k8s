@@ -48,7 +48,7 @@ def test_scan_cluster_returns_structured_result(_kubescape_and_cluster):
     result = scan_cluster(namespace=_INSECURE_NAMESPACE)
 
     assert isinstance(result, ScanResult)
-    assert result.framework == "nsa"
+    assert result.framework == "soc2"
     assert result.total_controls > 0
     assert result.passed + result.failed <= result.total_controls
     assert all(isinstance(f, Finding) for f in result.findings)
@@ -56,9 +56,16 @@ def test_scan_cluster_returns_structured_result(_kubescape_and_cluster):
 
 def test_scan_surfaces_planted_misconfigurations(_kubescape_and_cluster):
     """Assert on categories, not exact counts or control IDs — Kubescape's
-    precise output shifts between versions.
+    precise output shifts between versions. Pinned to framework="nsa"
+    explicitly (not scan_cluster's default, which M6.2 changed to
+    "soc2"): these fixtures were built against NSA's pod-hardening
+    controls specifically (see manifests/vulnerable/'s header comments).
+    SOC 2's Kubescape control set targets different concerns entirely
+    (secrets, admin access, network, encryption) and genuinely does not
+    surface these same categories — confirmed empirically during M6.2,
+    not assumed. This test keeps testing exactly what it always tested.
     """
-    result = scan_cluster(namespace=_INSECURE_NAMESPACE)
+    result = scan_cluster(namespace=_INSECURE_NAMESPACE, framework="nsa")
 
     assert result.failed > 0
 

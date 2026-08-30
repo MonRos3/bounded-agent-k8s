@@ -1,4 +1,4 @@
-.PHONY: verify verify-foundation reset seed seed-insecure reset-insecure test test-integration eval demo cli
+.PHONY: verify verify-foundation reset seed seed-insecure reset-insecure test test-integration eval demo cli compliance
 
 RUNS ?= 4
 
@@ -34,3 +34,6 @@ demo:
 
 cli:
 	python3 -m k8s_agent.cli
+
+compliance:
+	python3 -m compliance.cli $(if $(NAMESPACE),--namespace $(NAMESPACE),) $(if $(FRAMEWORK),--framework $(FRAMEWORK),)
