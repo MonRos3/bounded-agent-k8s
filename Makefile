@@ -1,4 +1,6 @@
-.PHONY: verify verify-foundation reset seed test test-integration demo
+.PHONY: verify verify-foundation reset seed test test-integration eval demo
+
+RUNS ?= 4
 
 verify:
 	bash scripts/verify.sh
@@ -17,6 +19,9 @@ test:
 
 test-integration:
 	python -m pytest -m integration
+
+eval:
+	python3 tests/eval_llm.py --runs $(RUNS)
 
 demo:
 	@echo "demo: not yet implemented"
