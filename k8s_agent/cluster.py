@@ -12,6 +12,7 @@ different in kind from k8s_agent/agent.py already importing it.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +24,8 @@ from k8s_agent.cluster_types import DeploymentState, DryRunDiff
 from safety_core.types import Action
 
 _REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
+_OBSERVE_POLL_INTERVAL_SECONDS = 2
+_OBSERVE_DEFAULT_TIMEOUT_SECONDS = 45
 
 
 class DeploymentNotFoundError(Exception):
@@ -70,12 +73,7 @@ class ClusterClient:
         progress": status.updated_replicas hasn't yet caught up to
         spec.replicas.
         """
-        try:
-            deployment = self._apps.read_namespaced_deployment(name, namespace)
-        except ApiException as exc:
-            if exc.status == 404:
-                raise DeploymentNotFoundError(f"Deployment '{name}' not found in namespace '{namespace}'") from exc
-            raise
+        deployment = self._read_deployment(name, namespace)
 
         app_label = deployment.spec.selector.match_labels.get("app", name)
         label_selector = f"app={app_label}"
@@ -120,6 +118,59 @@ class ClusterClient:
             if isinstance(min_available, int):
                 return min_available
         return None
+
+    def _read_deployment(self, name: str, namespace: str) -> Any:
+        try:
+            return self._apps.read_namespaced_deployment(name, namespace)
+        except ApiException as exc:
+            if exc.status == 404:
+                raise DeploymentNotFoundError(f"Deployment '{name}' not found in namespace '{namespace}'") from exc
+            raise
+
+    def observe_outcome(
+        self, deployment: str, namespace: str, metric: str, timeout_seconds: int = _OBSERVE_DEFAULT_TIMEOUT_SECONDS
+    ) -> dict[str, int]:
+        """Wait for `deployment`'s rollout to reach a terminal state
+        (settled — native Kubernetes readiness reached — or timeout),
+        then read `metric` off its status and return {metric: value}:
+        exactly the `observed` shape safety_core.success.check_regression
+        expects, so a caller can pass this straight through.
+
+        "Settled" is Kubernetes' own rollout-completion signal — the same
+        computation `kubectl rollout status` uses (observedGeneration
+        caught up, updatedReplicas/availableReplicas/replicas all equal
+        to spec.replicas) — not a heuristic this method invents.
+        Not-ready-by-timeout is not an error: the observed (likely
+        below-target) value is returned as-is, since that value IS the
+        regression signal check_regression exists to catch.
+        """
+        deadline = time.monotonic() + timeout_seconds
+        current = self._read_deployment(deployment, namespace)
+        while not self._rollout_settled(current) and time.monotonic() < deadline:
+            time.sleep(_OBSERVE_POLL_INTERVAL_SECONDS)
+            current = self._read_deployment(deployment, namespace)
+        return {metric: self._read_metric(current, metric)}
+
+    @staticmethod
+    def _rollout_settled(deployment: Any) -> bool:
+        spec_replicas = deployment.spec.replicas or 0
+        status = deployment.status
+        generation = deployment.metadata.generation or 0
+        if (status.observed_generation or 0) < generation:
+            return False
+        if (status.updated_replicas or 0) < spec_replicas:
+            return False
+        if (status.replicas or 0) > (status.updated_replicas or 0):
+            return False
+        if (status.available_replicas or 0) < (status.updated_replicas or 0):
+            return False
+        return True
+
+    @staticmethod
+    def _read_metric(deployment: Any, metric: str) -> int:
+        if metric == "healthy_replicas":
+            return deployment.status.ready_replicas or 0
+        raise ValueError(f"observe_outcome: unsupported metric {metric!r}")
 
     def _revision_history(self, namespace: str, label_selector: str) -> list[int]:
         """Every revision number recorded on this Deployment's ReplicaSets,

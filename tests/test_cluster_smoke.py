@@ -65,6 +65,33 @@ def test_scale_deployment_is_observable(cluster: ClusterClient):
         cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, before.desired_replicas)
 
 
+def test_observe_outcome_returns_ready_count_after_settle(cluster: ClusterClient):
+    before = cluster.get_deployment_state(_HEALTHY_DEPLOYMENT, _NAMESPACE)
+
+    observed = cluster.observe_outcome(_HEALTHY_DEPLOYMENT, _NAMESPACE, "healthy_replicas", timeout_seconds=10)
+
+    assert observed == {"healthy_replicas": before.desired_replicas}
+
+
+def test_observe_outcome_reports_below_target_on_unready(cluster: ClusterClient):
+    """Scaling up guarantees brand-new pods that can't possibly be Ready
+    within a couple seconds — a more deterministic way to force
+    not-settled than racing a rolling restart, where old pods often stay
+    Ready until the very last moment.
+    """
+    before = cluster.get_deployment_state(_HEALTHY_DEPLOYMENT, _NAMESPACE)
+    scaled_up = before.desired_replicas + 2
+
+    try:
+        cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, scaled_up)
+
+        observed = cluster.observe_outcome(_HEALTHY_DEPLOYMENT, _NAMESPACE, "healthy_replicas", timeout_seconds=2)
+
+        assert observed["healthy_replicas"] < scaled_up
+    finally:
+        cluster.scale_deployment(_HEALTHY_DEPLOYMENT, _NAMESPACE, before.desired_replicas)
+
+
 def test_dry_run_diff_does_not_mutate_cluster(cluster: ClusterClient):
     """The critical property: a server-side dry run must persist nothing.
     Proves it by re-querying live state after the dry run and asserting
