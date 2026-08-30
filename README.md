@@ -167,13 +167,47 @@ Four streams are worth watching, each for a different audience:
 4. **Docker/MiniStack, verbose** — `docker logs -f ministack` shows the
    Bedrock-proxy round trips between `ModelClient` and Ollama.
 
+### Demo: automatic regression recovery
+
+An end-to-end demo of the full observe → regress → recover cycle, with a
+*genuine* regression (not a test-injected one): a scale-up that can't
+actually schedule, so it never becomes ready, so it gets rolled back —
+automatically, deterministically, with no human approval and no model
+involvement in the recovery itself.
+
+```sh
+make seed     # if not already seeded
+make demo     # sizes capacity-limited-web's CPU request to exactly
+              # half the live node's allocatable CPU — replica 1 always
+              # fits, replica 2 never can, on any single-node cluster
+make cli
+```
+
+Then, in the operator terminal:
+
+```
+scale capacity-limited-web to 2 replicas in the bounded-agent-demo namespace
+```
+
+Watch for: the action executing (green, AUTO-tier — `scale_deployment` is
+reversible and auto-approved), then a `── recovery ──` block appears once
+the observe cycle finishes (~45s, since the new pod can never become
+Ready): `observed` (the real ready-replica count, stuck at 1),
+`regression` (REGRESSED — target not met), `recovery` (rolling back
+automatically), and `recovered` (restored to prior state). Nothing here
+is a prompt — the rollback already happened by the time it's shown.
+
+The same cycle threads through the audit stream under one trace id:
+`grep <trace-id> audit_logs/<file>.jsonl` shows `classified` → `observed`
+→ `regression_checked` → `rollback_invoked` in order — the full detail
+behind the curated terminal view.
+
+Run `make reset` afterward to restore clean seeded state (it deletes and
+re-applies the whole namespace, so `capacity-limited-web`'s CPU request
+goes back to its small seeded placeholder, not the demo-sized value).
+
 ### Not yet built
 
-- **Automatic rollback invocation** — `RollbackPlan`s are generated and
-  attached to every `Decision`, but nothing yet observes post-execution
-  state and invokes one automatically on regression.
-  `safety_core.success.check_regression` and `RollbackRegistry` exist and
-  are unit-tested, just not wired into the live loop.
 - **Kubescape scan → remediate → rescan loop** — no Kubescape integration
   exists in `k8s_agent/` yet.
 - **Web UI** — the operator console is terminal-only (`k8s_agent/cli.py`);

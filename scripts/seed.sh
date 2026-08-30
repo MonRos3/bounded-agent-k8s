@@ -28,7 +28,7 @@ kubectl apply -f "$SEED_DIR"
 # no-rollback-web deliberately stays at 1 revision — that's its whole
 # point — and payments-core doesn't need it either way, since the
 # protected-zone check fires before reversibility is ever considered.
-for deployment in healthy-web degraded-checkout solo-replica-web rollback-target-web; do
+for deployment in healthy-web degraded-checkout solo-replica-web rollback-target-web capacity-limited-web; do
     echo "seed.sh: generating rollout history for $deployment"
     kubectl rollout restart "deployment/$deployment" -n bounded-agent-demo
     kubectl rollout status "deployment/$deployment" -n bounded-agent-demo --timeout=120s

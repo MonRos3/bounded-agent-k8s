@@ -12,9 +12,10 @@ import pytest
 from rich.console import Console
 
 from k8s_agent.agent import AgentOutcome, AgentResult
-from k8s_agent.cli import handle_approve_tier, prompt_approval, render_approval_prompt
+from k8s_agent.cli import handle_approve_tier, prompt_approval, render_approval_prompt, render_recovery
 from k8s_agent.cluster import ExecutionResult
 from k8s_agent.cluster_types import DryRunDiff
+from k8s_agent.recovery import RecoveryOutcome, RecoveryResult
 from safety_core.audit import AuditEvent, AuditSink, Auditor
 from safety_core.guardrails import Guardrails
 from safety_core.rollback import RollbackPlan
@@ -154,7 +155,7 @@ def test_approve_with_reversible_action_runs_observe_and_recover():
     cluster_client.dry_run_diff.return_value = None
     cluster_client.update_resource_limits.return_value = ExecutionResult(success=True, detail={})
     cluster_client.observe_outcome.return_value = {"healthy_replicas": 4}
-    console = Console(quiet=True)
+    console = Console(record=True, width=200)
 
     handle_approve_tier(
         "bump memory on healthy-web", result, cluster_client, console, Guardrails(), Auditor(FakeAuditSink()),
@@ -162,6 +163,9 @@ def test_approve_with_reversible_action_runs_observe_and_recover():
     )
 
     cluster_client.observe_outcome.assert_called_once_with("healthy-web", "bounded-agent-demo", "healthy_replicas")
+    output = console.export_text()
+    assert "recovery" in output
+    assert "none — target met" in output
 
 
 def test_render_approval_prompt_shows_real_diff_when_available():
@@ -190,3 +194,53 @@ def test_render_approval_prompt_falls_back_when_no_diff():
     output = console.export_text()
     assert "requested change" in output
     assert "server-side dry-run" not in output
+
+
+def test_render_recovery_shows_no_regression():
+    console = Console(record=True, width=200)
+
+    render_recovery(console, RecoveryResult(outcome=RecoveryOutcome.NO_REGRESSION, observed={"healthy_replicas": 3}, rollback_execution=None))
+
+    output = console.export_text()
+    assert "observed" in output and "healthy_replicas=3" in output
+    assert "none — target met" in output
+    assert "REGRESSED" not in output
+
+
+def test_render_recovery_shows_regression_and_rollback():
+    console = Console(record=True, width=200)
+    recovery = RecoveryResult(
+        outcome=RecoveryOutcome.REGRESSED_AND_RECOVERED,
+        observed={"healthy_replicas": 1},
+        rollback_execution=ExecutionResult(success=True, detail={"replicas": 1}),
+    )
+
+    render_recovery(console, recovery)
+
+    output = console.export_text()
+    assert "REGRESSED" in output
+    assert "rolling back automatically" in output
+    assert "restored to prior state" in output
+
+
+def test_render_recovery_shows_failed_rollback():
+    console = Console(record=True, width=200)
+    recovery = RecoveryResult(
+        outcome=RecoveryOutcome.REGRESSED_ROLLBACK_FAILED,
+        observed={"healthy_replicas": 1},
+        rollback_execution=ExecutionResult(success=False, detail={"error": "boom"}),
+    )
+
+    render_recovery(console, recovery)
+
+    output = console.export_text()
+    assert "REGRESSED" in output
+    assert "recovery failed" in output
+
+
+def test_render_recovery_skips_output_when_skipped():
+    console = Console(record=True, width=200)
+
+    render_recovery(console, RecoveryResult(outcome=RecoveryOutcome.SKIPPED, observed=None, rollback_execution=None))
+
+    assert console.export_text().strip() == ""
