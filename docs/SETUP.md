@@ -104,6 +104,14 @@ conscious simplifications found and deferred along the way, not hidden
 ones — are documented honestly in
 [`FOLLOWUPS.md`](./FOLLOWUPS.md).
 
+`make demo-check` is a fourth, narrower check on top of `make verify`:
+not just "are the four layers reachable," but "is today's demo state
+actually seeded" — every deployment `manifests/seed/` and
+`manifests/vulnerable/` are supposed to produce, checked live against
+the cluster at the moment it runs (never a cached assumption). Useful
+any time you want to confirm the cluster matches what the seed manifests
+describe, not just before a demo.
+
 ## 2. Run the tests
 
 Three commands, each a different layer of the testing story:
@@ -182,3 +190,41 @@ Real issues hit while building this project, not hypothetical ones:
   problem — a surprising number of "it's broken" issues during this
   project's own development turned out to be a second Python
   installation shadowing the venv.
+
+### Getting back to a known-good state
+
+Whatever's wrong, try the cheapest fix first — restarting minikube
+unnecessarily costs real minutes you don't get back. An escalation
+ladder, not a single flat sequence:
+
+**Level 1 — usually enough (~30s):**
+```sh
+make reset && make reset-insecure
+make demo-check
+```
+Covers the overwhelming majority of "something looks wrong" cases: a
+scaled/deleted/mutated deployment, a stale rollout, leftover state from
+a previous run. Both scripts are idempotent — safe even if the
+namespaces are already gone or already fine.
+
+**Level 2 — if the model seems to be returning generic placeholder text**
+(see the MiniStack entry above): restart MiniStack.
+```sh
+docker restart ministack
+```
+If the container was removed entirely rather than just stopped, re-run
+the full `docker run` command from the setup steps above — the one flag
+that's easy to forget when recreating it from scratch is
+`MINISTACK_BEDROCK_PROXY_URL`; without it, MiniStack comes back up but
+silently stops proxying to Ollama.
+
+**Level 3 — last resort, the cluster itself seems broken** (not just its
+contents — `make demo-check`'s environment-layer section is failing on
+minikube/kubectl specifically, not just missing deployments):
+```sh
+minikube stop && minikube start
+```
+Then go back to Level 1 to reseed.
+
+Always finish with `make demo-check` before trusting the result —
+that's exactly what it's for.
