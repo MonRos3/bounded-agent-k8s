@@ -1,4 +1,4 @@
-.PHONY: verify verify-foundation reset seed seed-insecure reset-insecure test test-integration coverage eval demo cli compliance
+.PHONY: verify verify-foundation verify-architecture reset seed seed-insecure reset-insecure test test-integration coverage eval demo cli compliance
 
 RUNS ?= 4
 
@@ -7,6 +7,9 @@ verify:
 
 verify-foundation:
 	bash scripts/verify_foundation.sh
+
+verify-architecture:
+	bash scripts/verify_architecture.sh
 
 reset:
 	bash scripts/reset.sh

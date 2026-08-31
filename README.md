@@ -90,10 +90,19 @@ down; the point is knowing which.
 
 `make verify-foundation` is a different, complementary check: not whether
 the runtime environment is reachable, but whether the *repo itself* is
-still structurally sound — `safety_core/` stays domain-independent (a
-grep for Kubernetes/AWS-specific terms leaking into it), expected
-scaffolding exists, `.env.example` hygiene holds. Safe to re-run any
-time as the project grows, not just at initial setup.
+still structurally sound — expected scaffolding exists, `.env.example`
+hygiene holds, a few code-quality invariants on `safety_core/` pass.
+Safe to re-run any time as the project grows, not just at initial setup.
+
+`make verify-architecture` proves this project's core structural claims
+rather than just asserting them: `safety_core/` is domain-independent (a
+precise, allowlist-based grep — not "eyeball it," a real violation fails
+the check), the `k8s_agent → safety_core` dependency is genuinely
+one-way, and `compliance/` imports neither. Each proof prints a clear
+✓/✗. Known gaps these proofs don't (and aren't meant to) catch —
+conscious simplifications found and deferred along the way, not hidden
+ones — are documented honestly in
+[`docs/FOLLOWUPS.md`](./docs/FOLLOWUPS.md).
 
 ### 2. Run the tests
 

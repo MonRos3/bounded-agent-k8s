@@ -2,23 +2,22 @@
 # Architecture & repo-hygiene invariants — distinct from scripts/verify.sh,
 # which checks whether the runtime environment (venv/Docker/system CLIs) is
 # reachable right now. This script checks whether the repo itself is still
-# structurally sound: safety_core/ stays domain-independent, expected
-# scaffolding exists, .env hygiene holds. Safe to re-run any time; intended
-# to catch regressions as the project grows, not just at initial setup.
+# structurally sound: expected scaffolding exists, .env hygiene holds, and
+# a few code-quality invariants on safety_core/ hold. Safe to re-run any
+# time; intended to catch regressions as the project grows, not just at
+# initial setup.
 #
-# The domain-independence grep will also match commented "Kubernetes" or
-# "kubectl" — false positives there are fine, but any actual code using
-# these terms in safety_core/ is a real problem.
+# The domain-independence and one-way-dependency proofs live in
+# scripts/verify_architecture.sh (`make verify-architecture`) instead of
+# here — a single, precise, allowlist-based implementation rather than two
+# scripts each re-implementing the same grep at different rigor.
 
 set -uo pipefail
 PASS="✓"; FAIL="✗"; issues=0
 check() { if eval "$2"; then echo "  $PASS $1"; else echo "  $FAIL $1"; issues=$((issues+1)); fi; }
 
-echo "== safety_core/ architecture invariants =="
-echo "  -- domain-independence grep (should be empty or comments-only) --"
-hits=$(grep -rin "kubernetes\|kubectl\|\bpod\b\|replica\|namespace\|terraform\|bedrock\|ollama\|\baws\b" safety_core/ 2>/dev/null || true)
-if [ -z "$hits" ]; then echo "  $PASS no domain terms in safety_core/"; else
-  echo "  $FAIL domain terms found — review (comments OK, code not):"; echo "$hits" | sed 's/^/      /'; issues=$((issues+1)); fi
+echo "== safety_core/ code-quality invariants =="
+echo "  (domain-independence / one-way-dependency: see 'make verify-architecture')"
 check "safety_core imports cleanly" "python -c 'import safety_core' 2>/dev/null"
 check "types.py uses frozen dataclasses" "grep -q 'frozen=True' safety_core/types.py"
 check "abstract interfaces use ABC/abstractmethod" "grep -rq 'abstractmethod' safety_core/"
