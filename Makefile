@@ -1,4 +1,4 @@
-.PHONY: verify verify-foundation reset seed seed-insecure reset-insecure test test-integration eval demo cli compliance
+.PHONY: verify verify-foundation reset seed seed-insecure reset-insecure test test-integration coverage eval demo cli compliance
 
 RUNS ?= 4
 
@@ -25,6 +25,9 @@ test:
 
 test-integration:
 	python -m pytest -m integration
+
+coverage:
+	python -m pytest -q --cov=safety_core --cov=k8s_agent --cov=compliance --cov-report=term-missing -m "not integration"
 
 eval:
 	python3 tests/eval_llm.py --runs $(RUNS)
