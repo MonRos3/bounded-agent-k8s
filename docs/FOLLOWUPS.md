@@ -13,6 +13,49 @@ commit history, or a task's own planning notes; this just puts them all
 in one place instead of leaving a reader to discover them by reading
 every docstring or running the suite themselves.
 
+## Priority next addition: least-privilege execution scoping
+
+Of everything in this file, this is the one item that isn't just a
+deferred simplification — it's the next real architectural addition
+this project needs, not a nice-to-have alongside the rest.
+[`docs/ARCHITECTURE.md`](./ARCHITECTURE.md)'s "four controls" section
+already states this honestly: three of the four controls are built
+(Guardrails, the Gate/Policy, Observability); Scoped IAM is not.
+"Deferred" is the right word for *when*, not *whether* — a bounded
+agent whose execution credentials aren't themselves bounded still has
+an unbounded worst case if the Gate is ever wrong, bypassed, or simply
+hasn't been asked about a given code path yet.
+
+What it would involve:
+
+- **A least-privilege execution role for `ClusterClient`** — a
+  Kubernetes `Role`/`ClusterRole` (or the IAM-mapped equivalent for a
+  real EKS deployment, per the README's AWS mapping) scoped to exactly
+  the verbs and resource types `_EXECUTORS` actually needs
+  (`patch`/`delete` on `deployments`/`pods`, nothing broader) — not the
+  ambient credentials of whatever kubeconfig happens to be active, which
+  is what it uses today.
+- **Scoped credentials for the model-facing path, distinct from the
+  execution path** — `ModelClient` should never hold, or need, any
+  credential capable of a cluster mutation. Today that separation is
+  true only because of how the code happens to be structured, not
+  because anything enforces it.
+- **A containment test that actually proves the floor** — not "the Gate
+  correctly blocks X" (the existing suite already covers that
+  extensively), but "even if the Gate is wrong, or bypassed entirely,
+  the credentials `ClusterClient` holds physically cannot do more than
+  the scoped role allows." That's a different kind of test from
+  anything in `tests/` today: it has to attempt an out-of-scope action
+  directly against the API server using the *scoped* credentials and
+  assert it's rejected at the Kubernetes RBAC layer — independent of,
+  and never routed through, whatever the Gate would have decided.
+
+This is what "even a gate can't exceed this" — the original design
+principle behind Scoped IAM — needs to mean concretely, rather than
+staying a sentence in a design doc.
+
+## Other known gaps and deferred work
+
 - **PVC pod-owner resolution** — `delete_persistent_volume_claim` isn't
   in `classify_live`'s pod-scoped tool set, so its `pvc` argument is
   treated as a deployment name directly (the same bug class M3.2-fix
