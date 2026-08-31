@@ -97,16 +97,54 @@ time as the project grows, not just at initial setup.
 
 ### 2. Run the tests
 
+Three commands, each a different layer of the testing story:
+
 ```sh
-make test              # full suite: unit tests always run; integration
-                        # tests skip gracefully (not fail) if MiniStack/
-                        # Ollama/minikube aren't reachable
+make test              # unit tests (109) always run and always stay fast
+                        # (well under a second) — no cluster required.
+                        # The other 28, integration-marked, run alongside
+                        # them automatically whenever a live cluster is
+                        # reachable (as it usually is in active dev), or
+                        # skip gracefully (not fail) when it isn't —
+                        # `make test`'s own speed and count depend on
+                        # which of those is true when you run it.
 make test-integration   # only the integration-marked tests — requires the
-                        # live, seeded stack from step 1
+                        # live, seeded stack from step 1. Real Kubernetes
+                        # I/O: ClusterClient, classify_live, the recovery
+                        # cycle, Kubescape compliance scanning.
+make eval RUNS=4        # the probabilistic counterpart: runs the real
+                        # model N times against a 15-case corpus and
+                        # reports rates, never a single pass/fail.
+                        # Requires the full live stack. See EVAL.md for
+                        # the two-part story (designed accuracy +
+                        # boundary fail-safe rate) this suite exists to
+                        # measure.
 ```
 
-`pytest --cov=safety_core --cov-report=term-missing` reports coverage on
-the deterministic core specifically (target: ≥90%; currently ~99%).
+#### Coverage
+
+```sh
+make coverage           # unit-only (same scope as `make test`, so it
+                         # never needs a live cluster to report the
+                         # headline safety_core/ number)
+```
+
+**Coverage philosophy**: `safety_core/` — the deterministic safety
+spine — is 99% covered by the unit suite *alone*; every module but
+`gate.py` (98%, one line) is 100%. It doesn't need a live cluster to
+prove itself, by design: everything safety-critical is pure and
+injectable, so it's unit-tested directly. `k8s_agent/` and `compliance/`
+are lower by design, not by neglect — they're I/O boundaries (real
+Kubernetes API calls, real subprocess invocations of Kubescape) and
+interactive entry points (the REPL loops in `k8s_agent/cli.py` and
+`compliance/cli.py`), verified against a live cluster rather than
+mocked. Concretely: `k8s_agent/cluster.py` and `compliance/scan.py` sit
+at 22%/27% from `make coverage` alone, and rise to 80%/82% once `make
+test-integration` also runs — project-wide, 70% unit-only versus 86%
+combined. This project doesn't chase 100% outside `safety_core/`: a
+mocked unit test asserting `kubectl apply` was "called with the right
+args" is weaker evidence than a live integration test that actually
+calls it.
 
 ### 3. Run a request through the agent
 
