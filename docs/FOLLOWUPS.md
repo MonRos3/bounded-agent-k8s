@@ -21,7 +21,7 @@ this project needs, not a nice-to-have alongside the rest.
 [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md)'s "four controls" section
 already states this honestly: three of the four controls are built
 (Guardrails, the Gate/Policy, Observability); Scoped IAM is not.
-"Deferred" is the right word for *when*, not *whether* — a bounded
+"Deferred" is the right word for _when_, not _whether_ — a bounded
 agent whose execution credentials aren't themselves bounded still has
 an unbounded worst case if the Gate is ever wrong, bypassed, or simply
 hasn't been asked about a given code path yet.
@@ -46,7 +46,7 @@ What it would involve:
   the credentials `ClusterClient` holds physically cannot do more than
   the scoped role allows." That's a different kind of test from
   anything in `tests/` today: it has to attempt an out-of-scope action
-  directly against the API server using the *scoped* credentials and
+  directly against the API server using the _scoped_ credentials and
   assert it's rejected at the Kubernetes RBAC layer — independent of,
   and never routed through, whatever the Gate would have decided.
 
@@ -64,17 +64,9 @@ staying a sentence in a design doc.
   BLOCKs for "target not found," which is safe, if for the wrong stated
   reason. Flagged in M3.3, still open.
 
-- **Direction-agnostic PDB headroom** — `Gate._pdb_headroom` checks
-  *current* `healthy_replicas` vs. `pdb_min_available` regardless of
-  whether the action being classified would increase or decrease
-  replica count, so a scale-*up* on an already-zero-headroom deployment
-  BLOCKs even though scaling up can never breach a PDB floor. Found live
-  during M5.3 (worked around there by giving that one demo deployment no
-  PDB, rather than changing Gate logic). Over-conservative, errs safe.
-
 - **`delete_pod`'s rollback plan doesn't target what was deleted** —
   `K8sRollbackPlanner` offers the same `rollout_undo` (revert pod
-  template to a prior revision) as its "reversibility" story for *any*
+  template to a prior revision) as its "reversibility" story for _any_
   tool on a deployment with revision history, including `delete_pod` —
   but reverting a template doesn't meaningfully undo a pod deletion (the
   ReplicaSet controller already self-heals that independently, for an
@@ -91,7 +83,7 @@ staying a sentence in a design doc.
   documented in `README.md`'s compliance section and
   `tests/test_compliance_scan.py`'s comments (M6.2); cross-referenced
   here rather than re-explained, so this file stays the one place a
-  reader finds *pointers* to every known gap even when the full writeup
+  reader finds _pointers_ to every known gap even when the full writeup
   lives elsewhere.
 
 - **Feature-level deferred work** (Kubescape remediate → rescan loop, a
@@ -110,3 +102,38 @@ staying a sentence in a design doc.
   suite themselves. Left as-is per M7.1's precedent (`EVAL.md` documents
   the eval suite's own mid-batch flakiness the same way, rather than
   loosening a timeout to hide it).
+
+## OPA / Rego for gate policy — triggered follow-up (not yet needed)
+
+**Status:** Deliberately deferred. Documented as a triggered decision, not a gap.
+
+The Gate's policy (tier classification: allow-list, protected zones, blast-radius
+rules) is currently expressed as rules-as-data in Python (`safety_core/policy.py`,
+`safety_core/gate.py`), evaluated deterministically outside the model's reasoning
+loop. This is already policy-as-code in the sense that matters — declarative rules,
+independently testable, inspectable — and it is 99% unit-tested and domain-independent.
+
+**The candidate:** the gate's policy could instead be expressed in [Rego] and
+evaluated by [Open Policy Agent (OPA)][opa] — the CNCF-standard policy engine for
+declarative authorization, widely used in Kubernetes admission control. This would
+make the policy declarative-and-separable from the agent code, hot-reloadable
+without redeploying, and expressible once for multiple consumers.
+
+**Why it is NOT adopted now:** at a single gate serving a single domain, OPA is
+over-engineering. The Python gate is already correct, deterministic, and tested;
+rewriting a proven, load-bearing component to gain "declarative-ness" and
+"standard-ness" — neither of which is a correctness the gate currently lacks — adds
+a dependency and a second language (Rego) for no present need. The risk of swapping
+out the gate is highest precisely when other work (e.g. autonomy) is about to be
+built on top of it.
+
+**The trigger to adopt it:** when a second agent shares this policy engine — most
+concretely, the planned Terraform agent (project two), which reuses the
+domain-independent `safety_core`. Two-plus agents evaluating against one shared
+policy is exactly where OPA earns its place: one declarative policy, multiple
+enforcers. A secondary trigger is a need to change policy _without_ redeploying code
+(e.g. tightening a rule live based on observed behavior), where OPA's hot-reload is
+genuinely useful.
+
+[opa]: https://www.openpolicyagent.org/
+[Rego]: https://www.openpolicyagent.org/docs/latest/policy-language/

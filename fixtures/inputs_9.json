@@ -207,5 +207,95 @@
     },
     "expected_tier": "block",
     "expected_reason_contains": "target not found"
+  },
+  {
+    "name": "scale_up_on_zero_headroom_not_blocked_by_pdb",
+    "action": {
+      "tool": "scale_deployment",
+      "args": {
+        "namespace": "web",
+        "deployment": "solo-replica-web",
+        "current_replicas": 1,
+        "target_replicas": 3
+      },
+      "rationale": "Traffic is trending up; scaling out to handle load."
+    },
+    "state": {
+      "healthy_replicas": 1,
+      "pdb_min_available": 1,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 5,
+      "reduces_availability": false
+    },
+    "expected_tier": "auto",
+    "expected_reason_contains": "auto-approved"
+  },
+  {
+    "name": "scale_down_on_zero_headroom_still_blocked_by_pdb",
+    "action": {
+      "tool": "scale_deployment",
+      "args": {
+        "namespace": "web",
+        "deployment": "solo-replica-web",
+        "current_replicas": 1,
+        "target_replicas": 0
+      },
+      "rationale": "Decommissioning this workload; scaling down to zero."
+    },
+    "state": {
+      "healthy_replicas": 1,
+      "pdb_min_available": 1,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 5,
+      "reduces_availability": true
+    },
+    "expected_tier": "block",
+    "expected_reason_contains": "PDB"
+  },
+  {
+    "name": "pod_delete_on_zero_headroom_still_blocked_by_pdb",
+    "action": {
+      "tool": "delete_pod",
+      "args": {
+        "namespace": "web",
+        "pod": "solo-replica-web-6f9c7d5b7-z1a2b"
+      },
+      "rationale": "This pod appears unhealthy and needs to be recycled."
+    },
+    "state": {
+      "healthy_replicas": 1,
+      "pdb_min_available": 1,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 5,
+      "reduces_availability": true
+    },
+    "expected_tier": "block",
+    "expected_reason_contains": "PDB"
+  },
+  {
+    "name": "scale_up_on_healthy_deployment_unaffected_by_pdb",
+    "action": {
+      "tool": "scale_deployment",
+      "args": {
+        "namespace": "web",
+        "deployment": "web-frontend",
+        "current_replicas": 3,
+        "target_replicas": 5
+      },
+      "rationale": "Traffic is trending up; scaling out ahead of the evening peak."
+    },
+    "state": {
+      "healthy_replicas": 3,
+      "pdb_min_available": 2,
+      "protected": false,
+      "has_rollback_target": true,
+      "revision": 22,
+      "reduces_availability": false
+    },
+    "expected_tier": "auto",
+    "expected_reason_contains": "auto-approved"
   }
 ]

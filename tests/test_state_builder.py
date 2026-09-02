@@ -100,3 +100,70 @@ def test_build_facts_output_classified_correctly_by_gate(gate_policy, fake_rollb
     decision = gate.classify(action, State(facts=facts))
 
     assert decision.tier == Tier.AUTO
+
+
+def test_reduces_availability_omitted_when_action_not_supplied():
+    facts = build_facts(_deployment(), protected_zones=set())
+
+    assert "reduces_availability" not in facts
+
+
+def test_scale_up_target_does_not_reduce_availability():
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": "web", "deployment": "web-frontend", "target_replicas": 5},
+        rationale="",
+    )
+    facts = build_facts(_deployment(desired_replicas=3), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is False
+
+
+def test_scale_to_same_target_does_not_reduce_availability():
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": "web", "deployment": "web-frontend", "target_replicas": 3},
+        rationale="",
+    )
+    facts = build_facts(_deployment(desired_replicas=3), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is False
+
+
+def test_scale_down_target_reduces_availability():
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": "web", "deployment": "web-frontend", "target_replicas": 1},
+        rationale="",
+    )
+    facts = build_facts(_deployment(desired_replicas=3), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is True
+
+
+def test_scale_deployment_missing_target_replicas_defaults_to_reduces_availability():
+    action = Action(tool="scale_deployment", args={"namespace": "web", "deployment": "web-frontend"}, rationale="")
+    facts = build_facts(_deployment(desired_replicas=3), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is True
+
+
+def test_delete_pod_reduces_availability():
+    action = Action(tool="delete_pod", args={"namespace": "web", "pod": "web-frontend-abc12"}, rationale="")
+    facts = build_facts(_deployment(), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is True
+
+
+def test_read_only_action_does_not_reduce_availability():
+    action = Action(tool="get_pod_logs", args={"namespace": "web", "pod": "web-frontend-abc12"}, rationale="")
+    facts = build_facts(_deployment(), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is False
+
+
+def test_unhandled_tool_defaults_to_reduces_availability():
+    action = Action(tool="restart_deployment", args={"namespace": "web", "deployment": "web-frontend"}, rationale="")
+    facts = build_facts(_deployment(), protected_zones=set(), action=action)
+
+    assert facts["reduces_availability"] is True

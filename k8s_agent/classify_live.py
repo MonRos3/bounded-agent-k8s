@@ -44,7 +44,7 @@ def classify_live(action: Action, name: str, namespace: str, cluster_client: Clu
             cluster_client.resolve_pod_owner(name, namespace) if action.tool in _POD_SCOPED_TOOLS else name
         )
         deployment_state = cluster_client.get_deployment_state(deployment_name, namespace)
-        facts = build_facts(deployment_state, DEMO_POLICY.protected_zones)
+        facts = build_facts(deployment_state, DEMO_POLICY.protected_zones, action)
     except DeploymentNotFoundError:
         facts = _facts_for_missing_target()
 

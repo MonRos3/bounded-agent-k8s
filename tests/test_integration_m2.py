@@ -79,6 +79,38 @@ def test_delete_pod_on_solo_replica_deployment_blocked_by_pdb_breach(cluster: Cl
     assert "PDB" in decision.reason
 
 
+def test_scale_up_on_solo_replica_deployment_not_blocked_by_pdb(cluster: ClusterClient):
+    """PA-1: scaling UP a zero-headroom deployment can never breach its PDB
+    floor, so it must reach its normal tier instead of being blocked — the
+    direction-aware counterpart to the delete-still-blocks case above.
+    """
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": _DEMO_NAMESPACE, "deployment": "solo-replica-web", "target_replicas": 3},
+        rationale="Scaling out ahead of load.",
+    )
+
+    decision = classify_live(action, "solo-replica-web", _DEMO_NAMESPACE, cluster)
+
+    assert decision.tier == Tier.AUTO
+
+
+def test_scale_down_on_solo_replica_deployment_still_blocked_by_pdb(cluster: ClusterClient):
+    """PA-1 guard: scaling DOWN a zero-headroom deployment is the dangerous
+    direction and must still BLOCK, at the scale level as well as delete.
+    """
+    action = Action(
+        tool="scale_deployment",
+        args={"namespace": _DEMO_NAMESPACE, "deployment": "solo-replica-web", "target_replicas": 0},
+        rationale="Decommissioning this workload.",
+    )
+
+    decision = classify_live(action, "solo-replica-web", _DEMO_NAMESPACE, cluster)
+
+    assert decision.tier == Tier.BLOCK
+    assert "PDB" in decision.reason
+
+
 def test_action_in_protected_namespace_blocked(cluster: ClusterClient):
     pod = _first_pod_name(_PROTECTED_NAMESPACE, "payments-core")
     action = _delete_pod_action(pod, _PROTECTED_NAMESPACE)

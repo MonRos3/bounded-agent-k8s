@@ -106,7 +106,8 @@ class Gate:
             )
 
         headroom = self._pdb_headroom(facts)
-        if headroom is not None and headroom <= 0:
+        reduces_availability = facts.get("reduces_availability", True)
+        if headroom is not None and headroom <= 0 and reduces_availability:
             return self._decision(
                 action, Tier.BLOCK, _PDB_BREACH_REASON, reversible=True, rollback=rollback_plan, success=success_criterion
             )
